@@ -1,0 +1,21 @@
+# OS files
+.DS_Store
+
+# Xcode & Apple development caches
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+*.xcworkspace/xcuserdata/
+.xcworkspace/
+.swiftpm/
+
+# AI tool / assistant artifacts
+.copilot/
+.cursor/
+.ideas/
+
+# Local configuration and secrets
+.env
+.env.*
+!*.example
