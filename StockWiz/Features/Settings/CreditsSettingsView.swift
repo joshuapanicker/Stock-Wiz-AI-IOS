@@ -24,6 +24,8 @@ struct CreditsSettingsView: View {
                 } else if let credits {
                     if credits.hasOwnKey {
                         ownKeySection
+                    } else if credits.unlimited {
+                        unlimitedSection
                     } else {
                         usageSection(credits)
                         addKeySection
@@ -56,6 +58,25 @@ struct CreditsSettingsView: View {
                 Task { await removeKey() }
             }
             .disabled(removing)
+        }
+    }
+
+    // MARK: Unlimited (admin) state
+
+    private var unlimitedSection: some View {
+        Section {
+            HStack(spacing: 12) {
+                ZStack {
+                    Circle().fill(DS.Color.accent.opacity(0.12))
+                    Image(systemName: "bolt.fill").font(.system(size: 13)).foregroundStyle(DS.Color.accent)
+                }
+                .frame(width: 32, height: 32)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Unlimited access").font(.subheadline)
+                    Text("This account has no usage cap").font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
         }
     }
 

@@ -2,6 +2,7 @@ import Foundation
 
 struct CreditsStatus: Codable, Sendable {
     let hasOwnKey: Bool
+    let unlimited: Bool
     let metered: Bool
     let tokensUsed: Int
     let tokenLimit: Int
@@ -12,7 +13,7 @@ struct CreditsStatus: Codable, Sendable {
     let period: String
 
     enum CodingKeys: String, CodingKey {
-        case metered, warning, exhausted, period
+        case unlimited, metered, warning, exhausted, period
         case hasOwnKey = "has_own_key"
         case tokensUsed = "tokens_used"
         case tokenLimit = "token_limit"
