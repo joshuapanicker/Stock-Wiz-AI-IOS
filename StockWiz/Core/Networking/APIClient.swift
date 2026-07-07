@@ -208,6 +208,23 @@ extension APIClient {
         try await delete("/api/portfolio/\(symbol)")
     }
 
+    func sellHolding(symbol: String, sellPrice: Double, sellDate: String? = nil) async throws {
+        // Fire and forget — we don't need to decode the response.
+        // The holding is already removed from local state before this call.
+        let body = SellHoldingBody(sellPrice: sellPrice, sellDate: sellDate)
+        let data = try await request(
+            path: "/api/portfolio/\(symbol.uppercased())/sell",
+            method: "POST",
+            body: encoder.encode(body)
+        )
+        // Ignore the response body entirely — success is any 2xx status
+        _ = data
+    }
+
+    func soldPositions() async throws -> [SoldPosition] {
+        try await get("/api/portfolio/sold")
+    }
+
     func profile() async throws -> InvestmentProfile { try await get("/api/profile") }
     func saveProfile(_ profile: InvestmentProfile) async throws -> InvestmentProfile { try await send("/api/profile", method: "PUT", body: profile) }
     func alerts() async throws -> [UserAlert] { try await get("/api/alerts") }

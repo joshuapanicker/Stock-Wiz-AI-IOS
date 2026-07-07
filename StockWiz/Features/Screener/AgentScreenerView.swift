@@ -101,9 +101,10 @@ struct AgentScreenerView: View {
 
     private var screenerBackground: some View {
         ZStack(alignment: .top) {
-            Color(red: 0.025, green: 0.03, blue: 0.037).ignoresSafeArea()
-            RadialGradient(colors: [Color.green.opacity(0.13), .clear], center: UnitPoint(x: 0.12, y: 0.02), startRadius: 5, endRadius: 340).frame(height: 430).ignoresSafeArea()
-            RadialGradient(colors: [Color.cyan.opacity(0.07), .clear], center: UnitPoint(x: 0.94, y: 0.25), startRadius: 5, endRadius: 260).frame(height: 600).ignoresSafeArea()
+            DS.Color.background.ignoresSafeArea()
+            DS.Gradient.ambientGreen().frame(height: 430).ignoresSafeArea()
+            DS.Gradient.ambientViolet().frame(height: 600).ignoresSafeArea()
+            DS.Gradient.ambientSky(opacity: 0.04).frame(height: 350).ignoresSafeArea()
         }
     }
 
@@ -118,7 +119,7 @@ struct AgentScreenerView: View {
             marketPill("VIX", ValueFormatting.number(market?.vix, digits: 2), color: (market?.vix ?? 0) > 20 ? .orange : .green)
         }
         .font(.caption.monospaced()).padding(.horizontal, 13).padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: Capsule()).overlay(Capsule().stroke(Color.white.opacity(0.08))).padding(.top, 8)
+        .background(.ultraThinMaterial, in: Capsule()).overlay(Capsule().stroke(DS.Color.border)).padding(.top, 8)
     }
 
     private func marketPill(_ label: String, _ value: String, color: Color) -> some View {
@@ -126,33 +127,59 @@ struct AgentScreenerView: View {
     }
 
     private var hero: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack { Label("AI SCREENER", systemImage: "sparkles").font(.caption2.bold()).tracking(1.5).foregroundStyle(.green); Spacer(); Text("DISCOVERY ENGINE  /  01").font(.system(size: 8, weight: .bold)).tracking(1.1).foregroundStyle(.tertiary) }
-            HStack(alignment: .center) {
-                VStack(alignment: .leading, spacing: 7) {
-                    Text("Build a screen\nfrom an idea.").font(.system(size: 31, weight: .bold, design: .rounded)).tracking(-0.8)
-                    Text("Describe the opportunity. StockWiz turns it into measurable filters and ranked candidates.").font(.subheadline).foregroundStyle(.secondary).lineSpacing(3)
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("DISCOVER")
+                        .font(.system(size: 10, weight: .bold))
+                        .tracking(1.5)
+                        .foregroundStyle(DS.Color.accent)
+                    // Bold tracked headline — same family as DISCOVER label, scaled up
+                    Text("Build a screen\nfrom an idea.")
+                        .font(.system(size: 27, weight: .bold))
+                        .tracking(-0.3)
+                        .foregroundStyle(DS.Color.textPrimary)
                 }
-                Spacer(minLength: 8)
-                ZStack { Circle().fill(AngularGradient(colors: [.green.opacity(0.38), .cyan.opacity(0.12), .green.opacity(0.38)], center: .center)); Circle().fill(Color(red: 0.045, green: 0.06, blue: 0.055)).padding(5); Image(systemName: "scope").font(.title2).foregroundStyle(.green) }.frame(width: 66, height: 66).shadow(color: .green.opacity(0.2), radius: 15)
+                Spacer(minLength: 12)
+                ZStack {
+                    Circle().fill(AngularGradient(colors: [DS.Color.accent.opacity(0.38), DS.Color.violet.opacity(0.18), DS.Color.amber.opacity(0.12), DS.Color.accent.opacity(0.38)], center: .center))
+                    Circle().fill(DS.Color.background).padding(5)
+                    Image(systemName: "chart.line.uptrend.xyaxis").font(.title2).foregroundStyle(DS.Color.accent)
+                }.frame(width: 60, height: 60).shadow(color: DS.Color.accent.opacity(0.2), radius: 15)
             }
+
+            Text("Describe what you're looking for and StockWiz turns it into ranked results.")
+                .font(.caption.monospaced())
+                .foregroundStyle(DS.Color.textSecondary)
+                .lineSpacing(4)
+
+            // Search bar
             HStack(spacing: 10) {
-                Image(systemName: "sparkle.magnifyingglass").foregroundStyle(.green)
-                TextField("Try profitable software under 25 P/E", text: Bindable(model).query, axis: .vertical)
+                Image(systemName: "sparkle.magnifyingglass").foregroundStyle(DS.Color.accent)
+                TextField("Try: profitable software under 25 P/E", text: Bindable(model).query, axis: .vertical)
                     .textInputAutocapitalization(.never)
                     .submitLabel(.search)
+                    .font(.caption.monospaced())
                     .onSubmit { Task { await model.search() } }
-                Button { Task { await model.search() } } label: {
-                    Image(systemName: "arrow.up").font(.headline.bold()).frame(width: 35, height: 35).background(Color.green, in: Circle()).foregroundStyle(.black)
+                    .foregroundStyle(DS.Color.textPrimary)
+                if !model.query.isEmpty {
+                    Button { model.clear() } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(DS.Color.textTertiary)
+                    }
                 }
-                .disabled(model.query.trimmingCharacters(in: .whitespaces).isEmpty || model.isSearching)
+                Button { Task { await model.search() } } label: {
+                    Image(systemName: "arrow.up")
+                        .font(.headline.bold())
+                        .frame(width: 34, height: 34)
+                        .background(DS.Color.accent, in: Circle())
+                        .foregroundStyle(DS.Color.background)
+                }.disabled(model.query.trimmingCharacters(in: .whitespaces).isEmpty || model.isSearching)
             }
-            .padding(13).background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 16)).overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.green.opacity(0.24)))
-            HStack(spacing: 14) { Label("Natural language", systemImage: "text.bubble"); Label("Live universe", systemImage: "dot.radiowaves.left.and.right"); Label("Ranked results", systemImage: "list.number") }.font(.caption2).foregroundStyle(.secondary)
+            .padding(13)
+            .background(DS.Color.background.opacity(0.8), in: RoundedRectangle(cornerRadius: DS.Radius.large))
+            .overlay(RoundedRectangle(cornerRadius: DS.Radius.large).stroke(DS.Color.accent.opacity(0.24)))
         }
-        .padding(20)
-        .background(LinearGradient(colors: [Color(red: 0.07, green: 0.105, blue: 0.09), Color(red: 0.055, green: 0.06, blue: 0.075)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 24))
-        .overlay(RoundedRectangle(cornerRadius: 24).stroke(LinearGradient(colors: [Color.green.opacity(0.35), Color.white.opacity(0.04)], startPoint: .topLeading, endPoint: .bottomTrailing))).shadow(color: Color.green.opacity(0.08), radius: 24, y: 12)
+        .padding(.horizontal, 4)
     }
 
     private var promptChips: some View {
@@ -161,11 +188,12 @@ struct AgentScreenerView: View {
                 ForEach(Array(prompts.enumerated()), id: \.element) { index, prompt in
                     Button { Task { await model.search(prompt) } } label: {
                         VStack(alignment: .leading, spacing: 8) {
-                            Image(systemName: ["cpu", "cross.case", "chart.line.uptrend.xyaxis", "building.columns", "cart", "bolt"][index]).foregroundStyle(index.isMultiple(of: 2) ? .green : .cyan)
+                            Image(systemName: ["cpu", "cross.case", "chart.line.uptrend.xyaxis", "building.columns", "cart", "bolt"][index])
+                            .foregroundStyle([DS.Color.accent, DS.Color.violet, DS.Color.sky, DS.Color.amber, DS.Color.mint, DS.Color.rose][index % 6])
                             Text(prompt).font(.caption.weight(.medium)).foregroundStyle(.primary).lineLimit(2).multilineTextAlignment(.leading)
                         }
                         .frame(width: 142, height: 64, alignment: .leading).padding(12)
-                        .background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 15)).overlay(RoundedRectangle(cornerRadius: 15).stroke(Color.white.opacity(0.07)))
+                        .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.medium)).overlay(RoundedRectangle(cornerRadius: DS.Radius.medium).stroke(DS.Color.border))
                     }.buttonStyle(.plain)
                 }
             }
@@ -274,53 +302,87 @@ private struct UniverseStockRow: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            Text("\(rank)").font(.caption.monospaced().bold()).foregroundStyle(.tertiary).frame(width: 24, height: 24).background(Color.white.opacity(0.04), in: Circle())
+            // Logo with rank badge below it
+            VStack(spacing: 2) {
+                TickerLogo(symbol: stock.symbol, size: 38)
+                Text("#\(rank)")
+                    .font(.system(size: 8, weight: .bold, design: .monospaced))
+                    .foregroundStyle(DS.Color.textTertiary)
+            }
+            .frame(width: 38)
+
             VStack(alignment: .leading, spacing: 4) {
-                Text(stock.symbol).font(.headline.monospaced())
-                Text(stock.sector ?? "Unknown sector").font(.caption2).foregroundStyle(.secondary)
+                Text(stock.symbol).font(.headline.monospaced()).foregroundStyle(DS.Color.textPrimary)
+                Text(stock.sector ?? "Unknown sector").font(.caption2).foregroundStyle(DS.Color.textSecondary)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 4) {
-                Text(ValueFormatting.currency(stock.closePrice)).font(.subheadline.monospaced().bold())
+                Text(ValueFormatting.currency(stock.closePrice))
+                    .font(.subheadline.monospaced().bold())
+                    .foregroundStyle(DS.Color.textPrimary)
                 Text("Rev \(ValueFormatting.percent(stock.revenueGrowth)) · PE \(ValueFormatting.number(stock.forwardPE))")
                     .font(.caption2)
-                    .foregroundStyle((stock.revenueGrowth ?? 0) >= 0 ? .green : .red)
+                    .foregroundStyle((stock.revenueGrowth ?? 0) >= 0 ? DS.Color.gain : DS.Color.loss)
             }
-            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
+            Image(systemName: "chevron.right").font(.caption2).foregroundStyle(DS.Color.textTertiary)
         }
         .padding(15)
-        .background(LinearGradient(colors: [Color.white.opacity(0.055), Color.white.opacity(0.025)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 17))
-        .overlay(RoundedRectangle(cornerRadius: 17).stroke(Color.white.opacity(0.075)))
+        .background(DS.Gradient.rowCard, in: RoundedRectangle(cornerRadius: DS.Radius.large))
+        .overlay(RoundedRectangle(cornerRadius: DS.Radius.large).stroke(DS.Color.border))
     }
 }
 
 private struct SignalStockCard: View {
     let rank: Int
     let signal: ScreenerSignal
-    private var accent: Color { signal.classification == "buy" ? .green : .orange }
+    private var accent: Color { signal.classification == "buy" ? DS.Color.gain : DS.Color.warning }
     private var result: CriteriaResult { signal.classification == "buy" ? signal.buyResult : signal.watchResult }
 
     var body: some View {
         VStack(spacing: 12) {
             HStack(spacing: 11) {
-                Text("\(rank)").font(.caption2.monospaced().bold()).foregroundStyle(.secondary).frame(width: 25, height: 25).background(Color.white.opacity(0.05), in: Circle())
-                VStack(alignment: .leading, spacing: 3) { Text(signal.symbol).font(.headline.monospaced()); Text(signal.metrics.sector ?? "Unclassified").font(.caption2).foregroundStyle(.secondary) }
+                VStack(spacing: 2) {
+                    TickerLogo(symbol: signal.symbol, size: 38)
+                    Text("#\(rank)")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundStyle(accent.opacity(0.7))
+                }
+                .frame(width: 38)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(signal.symbol).font(.headline.monospaced()).foregroundStyle(DS.Color.textPrimary)
+                    Text(signal.metrics.sector ?? "Unclassified").font(.caption2).foregroundStyle(DS.Color.textSecondary)
+                }
                 Spacer()
-                VStack(alignment: .trailing, spacing: 3) { Text(ValueFormatting.currency(signal.metrics.closePrice)).font(.subheadline.monospaced().bold()); Text(signal.classification.uppercased()).font(.system(size: 9, weight: .heavy)).tracking(1).foregroundStyle(accent).padding(.horizontal, 8).padding(.vertical, 3).background(accent.opacity(0.1), in: Capsule()) }
+                VStack(alignment: .trailing, spacing: 3) {
+                    Text(ValueFormatting.currency(signal.metrics.closePrice))
+                        .font(.subheadline.monospaced().bold())
+                        .foregroundStyle(DS.Color.textPrimary)
+                    DSBadge(signal.classification.uppercased(), color: accent)
+                }
             }
             HStack(spacing: 10) {
-                metric("FWD P/E", ValueFormatting.number(signal.metrics.forwardPE))
-                metric("GROWTH", ValueFormatting.percent(signal.metrics.revenueGrowth))
-                metric("MARGIN", ValueFormatting.percent(signal.metrics.profitMargin))
+                metric("FWD P/E",  ValueFormatting.number(signal.metrics.forwardPE))
+                metric("GROWTH",   ValueFormatting.percent(signal.metrics.revenueGrowth))
+                metric("MARGIN",   ValueFormatting.percent(signal.metrics.profitMargin))
                 Spacer(minLength: 0)
-                Text("\(result.rulesMet)/\(result.rulesTotal)").font(.caption.monospaced().bold()).foregroundStyle(accent)
+                Text("\(result.rulesMet)/\(result.rulesTotal)")
+                    .font(.caption.monospaced().bold())
+                    .foregroundStyle(accent)
             }
         }
-        .padding(15).background(LinearGradient(colors: [accent.opacity(0.075), Color.white.opacity(0.025)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 18)).overlay(RoundedRectangle(cornerRadius: 18).stroke(accent.opacity(0.17)))
+        .padding(15)
+        .background(
+            LinearGradient(colors: [accent.opacity(0.07), DS.Color.surface], startPoint: .topLeading, endPoint: .bottomTrailing),
+            in: RoundedRectangle(cornerRadius: DS.Radius.large)
+        )
+        .overlay(RoundedRectangle(cornerRadius: DS.Radius.large).stroke(accent.opacity(0.18)))
     }
 
     private func metric(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) { Text(title).font(.system(size: 8, weight: .bold)).tracking(0.7).foregroundStyle(.tertiary); Text(value).font(.caption2.monospaced()).foregroundStyle(.secondary) }
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title).font(.system(size: 8, weight: .bold)).tracking(0.7).foregroundStyle(DS.Color.textTertiary)
+            Text(value).font(.caption2.monospaced()).foregroundStyle(DS.Color.textSecondary)
+        }
     }
 }
 
@@ -329,7 +391,7 @@ private extension View {
         self
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(15)
-            .background(Color(red: 0.065, green: 0.068, blue: 0.083), in: RoundedRectangle(cornerRadius: 17))
-            .overlay(RoundedRectangle(cornerRadius: 17).stroke(Color.white.opacity(0.07)))
+            .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.large))
+            .overlay(RoundedRectangle(cornerRadius: DS.Radius.large).stroke(DS.Color.border))
     }
 }

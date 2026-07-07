@@ -92,15 +92,23 @@ struct StockChatView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text(isUser ? "YOU" : "STOCKWIZ AI")
                     .font(.caption2.bold())
-                    .foregroundStyle(isUser ? Color.secondary : Color.green)
+                    .foregroundStyle(isUser ? DS.Color.textSecondary : DS.Color.accent)
                 if message.content.isEmpty {
-                    ProgressView().tint(.green)
+                    ProgressView().tint(DS.Color.accent)
                 } else {
                     Text(message.content).lineSpacing(3).textSelection(.enabled)
+                        .foregroundStyle(DS.Color.textPrimary)
                 }
             }
             .padding(12)
-            .background(isUser ? Color.green.opacity(0.1) : Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 14))
+            .background(
+                isUser ? DS.Color.accent.opacity(0.10) : DS.Color.surface,
+                in: RoundedRectangle(cornerRadius: DS.Radius.medium)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: DS.Radius.medium)
+                    .stroke(isUser ? DS.Color.accent.opacity(0.2) : DS.Color.border)
+            )
             if !isUser { Spacer(minLength: 25) }
         }
     }
@@ -113,14 +121,21 @@ struct StockChatView: View {
                 axis: .vertical
             )
             .lineLimit(1...4)
+            .foregroundStyle(DS.Color.textPrimary)
             .onSubmit { Task { await model.send() } }
             Button { Task { await model.send() } } label: {
-                Image(systemName: "arrow.up.circle.fill").font(.title2)
+                Image(systemName: "arrow.up.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(
+                        model.input.trimmingCharacters(in: .whitespaces).isEmpty
+                            ? DS.Color.textTertiary
+                            : DS.Color.accent
+                    )
             }
             .disabled(model.input.trimmingCharacters(in: .whitespaces).isEmpty || model.isStreaming)
         }
         .padding(11)
-        .background(Color.white.opacity(0.05), in: RoundedRectangle(cornerRadius: 13))
-        .overlay(RoundedRectangle(cornerRadius: 13).stroke(Color.white.opacity(0.08)))
+        .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.medium))
+        .overlay(RoundedRectangle(cornerRadius: DS.Radius.medium).stroke(DS.Color.border))
     }
 }

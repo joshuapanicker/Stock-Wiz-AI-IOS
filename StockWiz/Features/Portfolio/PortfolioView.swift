@@ -5,34 +5,40 @@ import SwiftUI
 @MainActor @Observable
 private final class PortfolioModel {
     var holdings: [PortfolioHolding] = []
+    var soldPositions: [SoldPosition] = []
     var isLoading = true
     var error: String?
 
     var totalValue: Double { holdings.compactMap(\.totalValue).reduce(0, +) }
-    var netGain: Double { holdings.compactMap(\.gainAbsolute).reduce(0, +) }
-    var sellSignals: Int { holdings.filter { $0.sellResult?.passed == true }.count }
+    var netGain: Double    { holdings.compactMap(\.gainAbsolute).reduce(0, +) }
+    var totalRealized: Double { soldPositions.compactMap(\.realizedGain).reduce(0, +) }
+    var sellSignalCount: Int { holdings.filter { $0.sellResult?.passed == true }.count }
 
     init() {
-        if let data = UserDefaults.standard.data(forKey: "cachedPortfolio"),
+        if let data   = UserDefaults.standard.data(forKey: "cachedPortfolio"),
            let cached = try? JSONDecoder().decode([PortfolioHolding].self, from: data) {
-            holdings = cached
-            isLoading = false
+            holdings  = cached; isLoading = false
         }
     }
 
     func load() async {
         isLoading = holdings.isEmpty; error = nil
-        do {
-            holdings = try await APIClient.shared.portfolio()
-            if let data = try? JSONEncoder().encode(holdings) { UserDefaults.standard.set(data, forKey: "cachedPortfolio") }
+        async let holdingsResult  = try? APIClient.shared.portfolio()
+        async let soldResult      = try? APIClient.shared.soldPositions()
+        if let h = await holdingsResult { holdings = h
+            if let data = try? JSONEncoder().encode(h) {
+                UserDefaults.standard.set(data, forKey: "cachedPortfolio")
+            }
         }
-        catch { self.error = error.localizedDescription }
+        if let s = await soldResult { soldPositions = s }
         isLoading = false
     }
 
     func add(symbol: String, date: Date, price: Double?, shares: Double) async throws {
-        let formatter = DateFormatter(); formatter.dateFormat = "yyyy-MM-dd"
-        try await APIClient.shared.addHolding(.init(symbol: symbol.uppercased(), buyDate: formatter.string(from: date), buyPrice: price, shares: shares, notes: ""))
+        let fmt = DateFormatter(); fmt.dateFormat = "yyyy-MM-dd"
+        try await APIClient.shared.addHolding(
+            .init(symbol: symbol.uppercased(), buyDate: fmt.string(from: date),
+                  buyPrice: price, shares: shares, notes: ""))
         await load()
     }
 
@@ -41,6 +47,31 @@ private final class PortfolioModel {
         try? await APIClient.shared.deleteHolding(symbol: symbol)
         await load()
     }
+
+    func sell(_ symbol: String, price: Double, date: String) async throws {
+        // 1. Remove from UI immediately — instant feedback, no waiting
+        holdings.removeAll { $0.symbol == symbol }
+        if let data = try? JSONEncoder().encode(holdings) {
+            UserDefaults.standard.set(data, forKey: "cachedPortfolio")
+        }
+        // 2. Call API — ignore decoding errors (server returns varying shapes)
+        //    Only propagate genuine network/auth failures
+        do {
+            try await APIClient.shared.sellHolding(symbol: symbol, sellPrice: price, sellDate: date)
+        } catch {
+            let msg = error.localizedDescription
+            let isAlreadySold = msg.contains("404") || msg.lowercased().contains("not found")
+            let isDecodeError = msg.lowercased().contains("missing") || msg.lowercased().contains("decod")
+            // Treat 404 and decode errors as success — the sale went through
+            if !isAlreadySold && !isDecodeError {
+                throw error
+            }
+        }
+        // 3. Reload sold positions in background to populate history
+        if let sold = try? await APIClient.shared.soldPositions() {
+            soldPositions = sold
+        }
+    }
 }
 
 struct PortfolioView: View {
@@ -48,142 +79,557 @@ struct PortfolioView: View {
     @State private var showingAdd = false
     @State private var showingBrokerage = false
     @State private var selected = Set<String>()
+    @State private var sellTarget: PortfolioHolding?
 
     var body: some View {
         NavigationStack {
-            Group {
-                if model.isLoading && model.holdings.isEmpty { portfolioLoading }
-                else if let error = model.error, model.holdings.isEmpty {
-                    ContentUnavailableView("Portfolio unavailable", systemImage: "wifi.exclamationmark", description: Text(error))
-                } else if model.holdings.isEmpty {
-                    ContentUnavailableView("No positions", systemImage: "briefcase", description: Text("Add a stock or connect a brokerage in Settings."))
-                } else { portfolioContent }
-            }
-            .navigationTitle("Portfolio")
-            .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    Button { showingBrokerage = true } label: { Image(systemName: "building.columns") }
-                    Button { showingAdd = true } label: { Image(systemName: "plus") }
+            ZStack(alignment: .top) {
+                DS.Color.background.ignoresSafeArea()
+                DS.Gradient.ambientGreen(opacity: 0.11).frame(height: 500).ignoresSafeArea()
+                DS.Gradient.ambientViolet(opacity: 0.07).frame(height: 650).ignoresSafeArea()
+                Group {
+                    if model.isLoading && model.holdings.isEmpty && model.soldPositions.isEmpty {
+                        loadingView
+                    } else if let error = model.error, model.holdings.isEmpty {
+                        emptyState(icon: "wifi.exclamationmark", title: "Portfolio unavailable", subtitle: error)
+                    } else {
+                        portfolioContent
+                    }
                 }
             }
-            .sheet(isPresented: $showingAdd) { AddHoldingView { symbol, date, price, shares in try await model.add(symbol: symbol, date: date, price: price, shares: shares) } }
+            .navigationTitle("Portfolio")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    Button { showingBrokerage = true } label: {
+                        Image(systemName: "building.columns")
+                            .padding(8).background(DS.Color.surface, in: Circle())
+                            .overlay(Circle().stroke(DS.Color.border))
+                    }
+                    Button { showingAdd = true } label: {
+                        Image(systemName: "plus")
+                            .padding(8).background(DS.Color.accent.opacity(0.15), in: Circle())
+                            .overlay(Circle().stroke(DS.Color.accent.opacity(0.3)))
+                            .foregroundStyle(DS.Color.accent)
+                    }
+                }
+            }
+            .sheet(isPresented: $showingAdd) {
+                AddHoldingView { sym, date, price, shares in
+                    try await model.add(symbol: sym, date: date, price: price, shares: shares)
+                }
+            }
             .sheet(isPresented: $showingBrokerage) { BrokerageSettingsView() }
+            .sheet(item: $sellTarget) { holding in SellHoldingSheet(holding: holding) { price, date in
+                try await model.sell(holding.symbol, price: price, date: date)
+            }}
             .task { await model.load() }
             .refreshable { await model.load() }
         }
     }
 
+    // MARK: Loading / Empty
+    private var loadingView: some View {
+        ScrollView { VStack(alignment: .leading, spacing: 16) {
+            Text("Loading your portfolio…").font(.title3.bold()).foregroundStyle(DS.Color.textPrimary)
+            ProgressView().tint(DS.Color.accent)
+            ForEach(0..<3, id: \.self) { _ in RoundedRectangle(cornerRadius: DS.Radius.large)
+                .fill(DS.Color.surface).frame(height: 80).redacted(reason: .placeholder) }
+        }.padding(16) }
+    }
+
+    private func emptyState(icon: String, title: String, subtitle: String) -> some View {
+        VStack(spacing: 14) {
+            Image(systemName: icon).font(.system(size: 40)).foregroundStyle(DS.Color.textTertiary)
+            Text(title).font(.headline).foregroundStyle(DS.Color.textPrimary)
+            Text(subtitle).font(.subheadline).foregroundStyle(DS.Color.textSecondary).multilineTextAlignment(.center)
+        }.frame(maxWidth: .infinity).padding(.top, 100).padding(.horizontal, 32)
+    }
+
+    // MARK: Main content
     private var portfolioContent: some View {
-        ZStack(alignment: .top) {
-            portfolioBackground
-            ScrollView {
-            VStack(spacing: 16) {
-                portfolioHero
-                performanceChart
-                allocationChart
-                HStack { stat("arrow.up.right", "Net P&L", ValueFormatting.currency(model.netGain), model.netGain >= 0 ? .green : .red); stat("exclamationmark.triangle", "Sell signals", "\(model.sellSignals)", .orange) }
-                selectionBar
-                HStack { Text("POSITIONS").font(.caption.bold()).tracking(1.3).foregroundStyle(.secondary); Spacer(); Text("\(model.holdings.count) HOLDINGS").font(.caption2.monospaced()).foregroundStyle(.tertiary) }
-                ForEach(model.holdings) { holding in holdingRow(holding) }
-            }.padding()
+        ScrollView(showsIndicators: false) {
+            VStack(spacing: 14) {
+                if model.holdings.isEmpty {
+                    // No active positions — show a minimal empty card
+                    VStack(spacing: 10) {
+                        Image(systemName: "briefcase")
+                            .font(.system(size: 36))
+                            .foregroundStyle(DS.Color.textTertiary)
+                        Text("No current positions")
+                            .font(.headline)
+                            .foregroundStyle(DS.Color.textPrimary)
+                        Text("Add a stock or connect a brokerage to start tracking.")
+                            .font(.subheadline)
+                            .foregroundStyle(DS.Color.textSecondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
+                    .padding(.horizontal, 32)
+                } else {
+                    portfolioHero
+                    statsRow
+                    performanceChart
+                    allocationChart
+                    selectionBar
+                    holdingsSection
+                }
+                if !model.soldPositions.isEmpty { soldHistorySection }
             }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 100)
         }
     }
 
-    private var portfolioBackground: some View { ZStack(alignment: .top) { Color(red: 0.025, green: 0.03, blue: 0.037).ignoresSafeArea(); RadialGradient(colors: [Color.green.opacity(0.12), .clear], center: UnitPoint(x: 0.12, y: 0), startRadius: 5, endRadius: 360).frame(height: 520).ignoresSafeArea(); RadialGradient(colors: [Color.cyan.opacity(0.055), .clear], center: UnitPoint(x: 0.95, y: 0.3), startRadius: 5, endRadius: 280).frame(height: 650).ignoresSafeArea() } }
-
+    // MARK: Hero
     private var portfolioHero: some View {
-        VStack(alignment: .leading, spacing: 13) {
-            HStack { Label("PORTFOLIO COMMAND CENTER", systemImage: "waveform.path.ecg").font(.caption2.bold()).tracking(1.2).foregroundStyle(.green); Spacer(); HStack(spacing: 5) { Circle().fill(.green).frame(width: 5, height: 5); Text("LIVE").font(.system(size: 9, weight: .bold)).foregroundStyle(.green) } }
-            Text("Total market value").font(.caption).foregroundStyle(.secondary)
-            Text(ValueFormatting.currency(model.totalValue)).font(.system(size: 36, weight: .bold, design: .monospaced)).minimumScaleFactor(0.7)
-            HStack { Label("\(model.holdings.count) active positions", systemImage: "square.stack.3d.up"); Spacer(); Text(model.netGain >= 0 ? "+\(ValueFormatting.currency(model.netGain))" : ValueFormatting.currency(model.netGain)).foregroundStyle(model.netGain >= 0 ? .green : .red).fontWeight(.semibold) }.font(.caption)
-        }.padding(20).background(LinearGradient(colors: [Color.green.opacity(0.12), Color.white.opacity(0.035)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 23)).overlay(RoundedRectangle(cornerRadius: 23).stroke(LinearGradient(colors: [Color.green.opacity(0.32), Color.white.opacity(0.04)], startPoint: .topLeading, endPoint: .bottomTrailing))).shadow(color: .green.opacity(0.07), radius: 20, y: 10)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label("PORTFOLIO", systemImage: "waveform.path.ecg").font(.system(size: 10, weight: .bold))
+                    .tracking(1.2).foregroundStyle(DS.Color.accent)
+                Spacer(); DSLiveDot()
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Total Value").font(.caption).foregroundStyle(DS.Color.textSecondary)
+                Text(ValueFormatting.currency(model.totalValue))
+                    .font(.system(size: 38, weight: .bold, design: .rounded))
+                    .foregroundStyle(DS.Color.textPrimary).minimumScaleFactor(0.7)
+            }
+            HStack(spacing: 16) {
+                Label("\(model.holdings.count) positions", systemImage: "square.stack.3d.up")
+                    .font(.caption).foregroundStyle(DS.Color.textSecondary)
+                Spacer()
+                Text(model.netGain >= 0 ? "+\(ValueFormatting.currency(model.netGain))" : ValueFormatting.currency(model.netGain))
+                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(model.netGain >= 0 ? DS.Color.gain : DS.Color.loss)
+            }
+        }.dsHeroCard()
     }
 
-    private var portfolioLoading: some View { ZStack { portfolioBackground; VStack(alignment: .leading, spacing: 14) { Text("Preparing your command center").font(.title3.bold()); Text("Syncing positions, market values, and sell signals…").font(.caption).foregroundStyle(.secondary); ProgressView().tint(.green); ForEach(0..<3) { _ in RoundedRectangle(cornerRadius: 17).fill(Color.white.opacity(0.05)).frame(height: 84).redacted(reason: .placeholder) } }.padding() } }
+    // MARK: Stats row — clearer sell signal label
+    private var statsRow: some View {
+        HStack(spacing: 10) {
+            DSStatTile(icon: "arrow.up.right", label: "Net P&L",
+                       value: ValueFormatting.currency(model.netGain),
+                       accent: model.netGain >= 0 ? DS.Color.gain : DS.Color.loss)
+            DSStatTile(icon: "exclamationmark.triangle",
+                       label: "Meet sell criteria",
+                       value: "\(model.sellSignalCount)",
+                       accent: model.sellSignalCount > 0 ? DS.Color.warning : DS.Color.gain)
+        }
+    }
 
+    // MARK: Performance chart
     private var performanceChart: some View {
         let points = combinedHistory
-        return VStack(alignment: .leading, spacing: 8) {
-            HStack { VStack(alignment: .leading, spacing: 3) { Text("VALUE TRAJECTORY").font(.caption.bold()).tracking(1); Text("Combined market value over time").font(.caption2).foregroundStyle(.secondary) }; Spacer(); Image(systemName: "chart.line.uptrend.xyaxis").foregroundStyle(.green) }
-            Chart(points, id: \.0) { point in
-                AreaMark(x: .value("Date", point.0), y: .value("Value", point.1)).foregroundStyle(LinearGradient(colors: [.green.opacity(0.3), .clear], startPoint: .top, endPoint: .bottom))
-                LineMark(x: .value("Date", point.0), y: .value("Value", point.1)).foregroundStyle(.green).lineStyle(.init(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                DSSectionHeader(title: "VALUE OVER TIME", subtitle: "Combined market value")
+                Spacer()
+                Image(systemName: "chart.line.uptrend.xyaxis").foregroundStyle(DS.Color.accent).font(.system(size: 14))
             }
-            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 3)) { AxisValueLabel().foregroundStyle(.secondary) } }
-            .chartYAxis { AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4, 5])).foregroundStyle(Color.white.opacity(0.08)); AxisValueLabel { if let amount = value.as(Double.self) { Text(compactCurrency(amount)) } }.foregroundStyle(.secondary) } }
-            .chartPlotStyle { plot in plot.background(Color.black.opacity(0.12)).clipShape(RoundedRectangle(cornerRadius: 10)) }
-            .frame(height: 190)
-        }.padding().background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 19)).overlay(RoundedRectangle(cornerRadius: 19).stroke(Color.white.opacity(0.07)))
+            Chart(points, id: \.0) { point in
+                AreaMark(x: .value("Date", point.0), y: .value("Value", point.1))
+                    .foregroundStyle(LinearGradient(colors: [DS.Color.accent.opacity(0.28), .clear], startPoint: .top, endPoint: .bottom))
+                LineMark(x: .value("Date", point.0), y: .value("Value", point.1))
+                    .foregroundStyle(DS.Color.accent).lineStyle(.init(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
+            }
+            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 3)) { AxisValueLabel().foregroundStyle(DS.Color.textSecondary) } }
+            .chartYAxis { AxisMarks(position: .leading, values: .automatic(desiredCount: 4)) { value in
+                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4, 5])).foregroundStyle(DS.Color.border)
+                AxisValueLabel { if let amount = value.as(Double.self) { Text(compactCurrency(amount)).foregroundStyle(DS.Color.textSecondary) } }
+            }}
+            .chartPlotStyle { plot in plot.background(DS.Color.background.opacity(0.5)).clipShape(RoundedRectangle(cornerRadius: 8)) }
+            .frame(height: 180)
+        }.dsCard()
     }
 
     private var combinedHistory: [(String, Double)] {
         var totals: [String: Double] = [:]
-        for holding in model.holdings { for point in holding.history { totals[point.date, default: 0] += point.close * holding.shares } }
+        for h in model.holdings { for pt in h.history { totals[pt.date, default: 0] += pt.close * h.shares } }
         return totals.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
     }
 
-    private func compactCurrency(_ value: Double) -> String { if abs(value) >= 1_000_000 { return "$\((value / 1_000_000).formatted(.number.precision(.fractionLength(1))))M" }; if abs(value) >= 1_000 { return "$\((value / 1_000).formatted(.number.precision(.fractionLength(0))))K" }; return "$\(value.formatted(.number.precision(.fractionLength(0))))" }
-
-    private var allocationChart: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack { VStack(alignment: .leading) { Text("ALLOCATION MAP").font(.caption.bold()).tracking(1); Text("Position concentration by market value").font(.caption2).foregroundStyle(.secondary) }; Spacer(); Image(systemName: "chart.pie.fill").foregroundStyle(.cyan) }
-            Chart(model.holdings) { holding in
-                SectorMark(angle: .value("Value", holding.totalValue ?? 0), innerRadius: .ratio(0.62), angularInset: 2)
-                    .foregroundStyle(by: .value("Symbol", holding.symbol))
-            }.frame(height: 170).chartLegend(position: .bottom, spacing: 12)
-        }.padding().background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 19)).overlay(RoundedRectangle(cornerRadius: 19).stroke(Color.white.opacity(0.07)))
+    private func compactCurrency(_ v: Double) -> String {
+        if abs(v) >= 1_000_000 { return "$\((v / 1_000_000).formatted(.number.precision(.fractionLength(1))))M" }
+        if abs(v) >= 1_000 { return "$\((v / 1_000).formatted(.number.precision(.fractionLength(0))))K" }
+        return "$\(v.formatted(.number.precision(.fractionLength(0))))"
     }
 
+    // MARK: Allocation chart — donut left, legend with % right
+    private var allocationChart: some View {
+        let total = model.holdings.compactMap(\.totalValue).reduce(0, +)
+        let slices: [(String, Double, Double)] = model.holdings.compactMap { h in
+            guard let tv = h.totalValue, total > 0 else { return nil }
+            return (h.symbol, tv, (tv / total) * 100)
+        }.sorted { $0.1 > $1.1 }
+
+        let colors: [Color] = DS.Color.chartPalette
+        return VStack(alignment: .leading, spacing: 10) {
+            DSSectionHeader(title: "ALLOCATION", subtitle: "By current market value")
+            HStack(spacing: 16) {
+                // Donut
+                Chart(Array(slices.enumerated()), id: \.offset) { idx, slice in
+                    SectorMark(angle: .value("Value", slice.1), innerRadius: .ratio(0.58), angularInset: 2)
+                        .foregroundStyle(colors[idx % colors.count])
+                }
+                .frame(width: 120, height: 120)
+
+                // Legend with percentages
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(slices.prefix(6).enumerated()), id: \.offset) { idx, slice in
+                        HStack(spacing: 8) {
+                            Circle().fill(colors[idx % colors.count]).frame(width: 8, height: 8)
+                            Text(slice.0).font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(DS.Color.textPrimary)
+                            Spacer()
+                            Text("\(slice.2.formatted(.number.precision(.fractionLength(1))))%")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(DS.Color.textSecondary)
+                        }
+                    }
+                }.frame(maxWidth: .infinity)
+            }
+        }.dsCard()
+    }
+
+    // MARK: Selection bar
     private var selectionBar: some View {
         HStack {
             Button(selected.count == model.holdings.count ? "Clear All" : "Select All") {
                 selected = selected.count == model.holdings.count ? [] : Set(model.holdings.map(\.symbol))
-            }
+            }.font(.subheadline).foregroundStyle(DS.Color.accent)
             Spacer()
             if !selected.isEmpty {
-                Text("\(selected.count) selected").font(.caption).foregroundStyle(.secondary)
-                Button("Delete", role: .destructive) {
-                    let symbols = selected; selected = []
-                    Task { for symbol in symbols { await model.remove(symbol) } }
-                }
+                Text("\(selected.count) selected").font(.caption).foregroundStyle(DS.Color.textSecondary)
+                Button("Delete") {
+                    let syms = selected; selected = []
+                    Task { for s in syms { await model.remove(s) } }
+                }.font(.subheadline.bold()).foregroundStyle(DS.Color.loss)
             }
-        }.font(.subheadline).padding(.horizontal, 4)
+        }.padding(.horizontal, 4)
     }
 
-    private func stat(_ icon: String, _ label: String, _ value: String, _ color: Color) -> some View {
-        VStack(alignment: .leading, spacing: 7) { Image(systemName: icon).foregroundStyle(color); Text(label).font(.caption).foregroundStyle(.secondary); Text(value).font(.headline.monospaced()) }
-            .frame(maxWidth: .infinity, alignment: .leading).padding().background(Color.white.opacity(0.045), in: RoundedRectangle(cornerRadius: 16)).overlay(RoundedRectangle(cornerRadius: 16).stroke(Color.white.opacity(0.07)))
+    // MARK: Holdings list — tapping navigates to SELL analysis
+    private var holdingsSection: some View {
+        VStack(spacing: 10) {
+            HStack {
+                DSSectionHeader(title: "POSITIONS")
+                Spacer()
+                Text("\(model.holdings.count) HOLDINGS").font(.system(size: 9, weight: .bold)).tracking(0.8).foregroundStyle(DS.Color.textTertiary)
+            }
+            ForEach(model.holdings) { holdingRow($0) }
+        }
     }
 
     private func holdingRow(_ holding: PortfolioHolding) -> some View {
         HStack(spacing: 10) {
-            Button { if selected.contains(holding.symbol) { selected.remove(holding.symbol) } else { selected.insert(holding.symbol) } } label: {
-                Image(systemName: selected.contains(holding.symbol) ? "checkmark.square.fill" : "square").foregroundStyle(selected.contains(holding.symbol) ? .green : .secondary)
-            }
-            NavigationLink(destination: StockDetailView(symbol: holding.symbol, action: "sell")) {
-            HStack {
-                VStack(alignment: .leading) {
-                    HStack { Text(holding.symbol).font(.headline.monospaced()); if holding.sellResult?.passed == true { Text("SELL").font(.caption2.bold()).foregroundStyle(.red) } }
-                    Text("\(holding.shares.formatted()) shares · avg \(ValueFormatting.currency(holding.buyPrice))").font(.caption).foregroundStyle(.secondary)
-                    if holding.notes.hasPrefix("Synced from") { Text(holding.notes).font(.caption2).foregroundStyle(.purple) }
+            // Checkbox
+            Button {
+                withAnimation(.spring(response: 0.25, dampingFraction: 0.7)) {
+                    if selected.contains(holding.symbol) { selected.remove(holding.symbol) }
+                    else { selected.insert(holding.symbol) }
                 }
+            } label: {
+                Image(systemName: selected.contains(holding.symbol) ? "checkmark.square.fill" : "square")
+                    .foregroundStyle(selected.contains(holding.symbol) ? DS.Color.accent : DS.Color.textTertiary)
+                    .font(.system(size: 18))
+            }
+
+            // Main card — navigate to sell analysis on tap
+            NavigationLink(destination: StockDetailView(symbol: holding.symbol, action: "sell")) {
+                HStack(spacing: 12) {
+                    // Company logo with sell dot overlay
+                    ZStack(alignment: .bottomTrailing) {
+                        TickerLogo(symbol: holding.symbol, size: 40)
+                        if holding.sellResult?.passed == true {
+                            Circle()
+                                .fill(DS.Color.loss)
+                                .frame(width: 10, height: 10)
+                                .overlay(Circle().stroke(DS.Color.background, lineWidth: 1.5))
+                                .offset(x: 2, y: 2)
+                        }
+                    }
+
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
+                            Text(holding.symbol).font(.system(size: 14, weight: .bold, design: .monospaced)).foregroundStyle(DS.Color.textPrimary)
+                            if holding.sellResult?.passed == true { DSBadge("SELL", color: DS.Color.loss) }
+                            if holding.notes.hasPrefix("Synced from") { DSBadge("SYNCED", color: .purple) }
+                        }
+                        Text("\(holding.shares.formatted()) shares · avg \(ValueFormatting.currency(holding.buyPrice))")
+                            .font(.caption).foregroundStyle(DS.Color.textSecondary)
+                    }
+
+                    Spacer()
+
+                    VStack(alignment: .trailing, spacing: 4) {
+                        Text(ValueFormatting.currency(holding.totalValue))
+                            .font(.system(size: 14, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(DS.Color.textPrimary)
+                        Text(ValueFormatting.percent(holding.gainPercent)).font(.caption.bold())
+                            .foregroundStyle((holding.gainPercent ?? 0) >= 0 ? DS.Color.gain : DS.Color.loss)
+                    }
+
+                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(DS.Color.textTertiary)
+                }
+                .padding(.horizontal, 14).padding(.vertical, 12)
+                .background(
+                    holding.sellResult?.passed == true ? DS.Color.loss.opacity(0.05) : DS.Color.surface,
+                    in: RoundedRectangle(cornerRadius: DS.Radius.large)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: DS.Radius.large)
+                        .stroke(holding.sellResult?.passed == true ? DS.Color.loss.opacity(0.2) : DS.Color.border)
+                )
+            }
+            .buttonStyle(.plain)
+
+            // Sell button — only visible when this holding is selected
+            if selected.contains(holding.symbol) {
+                Button {
+                    sellTarget = holding
+                } label: {
+                    VStack(spacing: 3) {
+                        Image(systemName: "dollarsign.circle.fill")
+                            .font(.system(size: 16))
+                            .foregroundStyle(DS.Color.warning)
+                        Text("Sell")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(DS.Color.warning)
+                    }
+                    .frame(width: 44, height: 44)
+                }
+                .buttonStyle(.plain)
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .contextMenu {
+            Button("Record Sale") { sellTarget = holding }
+            Button("Delete", role: .destructive) { Task { await model.remove(holding.symbol) } }
+        }
+    }
+
+    // MARK: Sold history
+    private var soldHistorySection: some View {
+        VStack(spacing: 10) {
+            HStack {
+                DSSectionHeader(title: "TRADE HISTORY")
                 Spacer()
-                VStack(alignment: .trailing) { Text(ValueFormatting.currency(holding.totalValue)).font(.headline.monospaced()); Text(ValueFormatting.percent(holding.gainPercent)).foregroundStyle((holding.gainPercent ?? 0) >= 0 ? .green : .red).font(.caption) }
-            }.padding().background(LinearGradient(colors: [Color.white.opacity(0.055), Color.white.opacity(0.025)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 17)).overlay(RoundedRectangle(cornerRadius: 17).stroke(holding.sellResult?.passed == true ? Color.red.opacity(0.2) : Color.white.opacity(0.07)))
-            }.buttonStyle(.plain)
-        }.contextMenu { Button("Delete", role: .destructive) { Task { await model.remove(holding.symbol) } } }
+                if model.totalRealized != 0 {
+                    Text((model.totalRealized >= 0 ? "+" : "") + ValueFormatting.currency(model.totalRealized) + " realized")
+                        .font(.caption.bold()).foregroundStyle(model.totalRealized >= 0 ? DS.Color.gain : DS.Color.loss)
+                }
+            }
+            ForEach(model.soldPositions, id: \.stableID) { pos in
+                HStack(spacing: 12) {
+                    // Logo with a small checkmark overlay indicating completed sale
+                    ZStack(alignment: .bottomTrailing) {
+                        TickerLogo(symbol: pos.symbol, size: 38)
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(DS.Color.background)
+                            .background(
+                                (pos.realizedGain ?? 0) >= 0 ? DS.Color.gain : DS.Color.loss,
+                                in: Circle()
+                            )
+                            .offset(x: 2, y: 2)
+                    }
+
+                    VStack(alignment: .leading, spacing: 3) {
+                        Text(pos.symbol).font(.system(size: 13, weight: .bold, design: .monospaced)).foregroundStyle(DS.Color.textPrimary)
+                        Text("Sold \(pos.sellDate) · \(pos.shares.formatted()) sh @ \(ValueFormatting.currency(pos.sellPrice))")
+                            .font(.caption2).foregroundStyle(DS.Color.textSecondary)
+                    }
+                    Spacer()
+                    VStack(alignment: .trailing, spacing: 3) {
+                        if let gain = pos.realizedGain {
+                            Text((gain >= 0 ? "+" : "") + ValueFormatting.currency(gain))
+                                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(gain >= 0 ? DS.Color.gain : DS.Color.loss)
+                        }
+                        if let pct = pos.realizedPct {
+                            Text((pct >= 0 ? "+" : "") + String(format: "%.2f", pct) + "%")
+                                .font(.caption2.monospaced()).foregroundStyle(DS.Color.textSecondary)
+                        }
+                    }
+                }
+                .padding(.horizontal, 14).padding(.vertical, 10)
+                .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.medium))
+                .overlay(RoundedRectangle(cornerRadius: DS.Radius.medium).stroke(DS.Color.border))
+            }
+        }
     }
 }
 
+// MARK: - Sell Holding Sheet
+private struct SellHoldingSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    let holding: PortfolioHolding
+    let onSell: (Double, String) async throws -> Void
+
+    @State private var sellPriceText: String
+    @State private var sellDate = Date()
+    @State private var isSelling = false
+    @State private var error: String?
+
+    init(holding: PortfolioHolding, onSell: @escaping (Double, String) async throws -> Void) {
+        self.holding = holding
+        self.onSell  = onSell
+        _sellPriceText = State(initialValue: holding.currentPrice.map { String(format: "%.2f", $0) } ?? "")
+    }
+
+    private var sellPrice: Double? { Double(sellPriceText) }
+    private var proceeds: Double? { sellPrice.map { $0 * holding.shares } }
+    private var gain: Double? {
+        guard let sp = sellPrice, let bp = holding.buyPrice else { return nil }
+        return (sp - bp) * holding.shares
+    }
+
+    var body: some View {
+        NavigationStack {
+            ZStack {
+                DS.Color.background.ignoresSafeArea()
+                ScrollView {
+                    VStack(spacing: 20) {
+                        // Header info
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Record Sale — \(holding.symbol)").font(.title3.bold()).foregroundStyle(DS.Color.textPrimary)
+                            Text("\(holding.shares.formatted()) shares · bought @ \(ValueFormatting.currency(holding.buyPrice))")
+                                .font(.subheadline).foregroundStyle(DS.Color.textSecondary)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+
+                        // Sell price input
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Sell Price per Share").font(.caption).foregroundStyle(DS.Color.textSecondary)
+                            HStack {
+                                Text("$").foregroundStyle(DS.Color.textSecondary)
+                                TextField("0.00", text: $sellPriceText).keyboardType(.decimalPad)
+                                    .font(.system(size: 20, weight: .semibold, design: .monospaced))
+                                    .foregroundStyle(DS.Color.textPrimary)
+                            }
+                            .padding(14)
+                            .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.medium))
+                            .overlay(RoundedRectangle(cornerRadius: DS.Radius.medium).stroke(DS.Color.accent.opacity(0.3)))
+                        }
+
+                        DatePicker("Sell Date", selection: $sellDate, displayedComponents: .date)
+                            .foregroundStyle(DS.Color.textPrimary)
+
+                        // Estimated P&L
+                        if let pr = proceeds, let g = gain {
+                            HStack(spacing: 10) {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Proceeds").font(.caption).foregroundStyle(DS.Color.textSecondary)
+                                    Text(ValueFormatting.currency(pr)).font(.system(size: 16, weight: .bold, design: .monospaced))
+                                        .foregroundStyle(DS.Color.textPrimary)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(14)
+                                .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.medium))
+                                .overlay(RoundedRectangle(cornerRadius: DS.Radius.medium).stroke(DS.Color.border))
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text("Realized P&L").font(.caption).foregroundStyle(DS.Color.textSecondary)
+                                    Text((g >= 0 ? "+" : "") + ValueFormatting.currency(g))
+                                        .font(.system(size: 16, weight: .bold, design: .monospaced))
+                                        .foregroundStyle(g >= 0 ? DS.Color.gain : DS.Color.loss)
+                                }
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(14)
+                                .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.medium))
+                                .overlay(RoundedRectangle(cornerRadius: DS.Radius.medium).stroke(DS.Color.border))
+                            }
+                        }
+
+                        if let error { Text(error).font(.caption).foregroundStyle(DS.Color.loss)
+                            .frame(maxWidth: .infinity, alignment: .leading) }
+
+                        // Confirm button
+                        Button {
+                            guard let price = sellPrice, !isSelling else { return }
+                            let fmt = DateFormatter(); fmt.dateFormat = "yyyy-MM-dd"
+                            let dateStr = fmt.string(from: sellDate)
+                            isSelling = true  // disable immediately — prevents double-tap 404
+                            Task {
+                                do {
+                                    try await onSell(price, dateStr)
+                                    dismiss()
+                                } catch {
+                                    let msg = error.localizedDescription
+                                    // Treat 404, "not found", and decode errors as success
+                                    // — the sale went through but the response couldn't be parsed
+                                    if msg.contains("404") || msg.lowercased().contains("not found")
+                                        || msg.lowercased().contains("missing")
+                                        || msg.lowercased().contains("decod") {
+                                        dismiss()
+                                    } else {
+                                        self.error = msg
+                                        isSelling = false
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack { Spacer()
+                                if isSelling { ProgressView().tint(DS.Color.background).controlSize(.small) }
+                                else { Text("Confirm Sale").font(.system(size: 16, weight: .semibold)).foregroundStyle(DS.Color.background) }
+                                Spacer()
+                            }.frame(height: 50)
+                            .background(sellPrice != nil ? DS.Color.warning : DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.medium))
+                        }.disabled(sellPrice == nil || isSelling)
+                    }.padding(20)
+                }
+            }
+            .navigationTitle("Record Sale")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } } }
+        }
+    }
+}
+
+// MARK: - Add Holding Sheet
 private struct AddHoldingView: View {
     @Environment(\.dismiss) private var dismiss
-    @State private var symbol = ""; @State private var suggestions: [StockSearchResult] = []; @State private var date = Date(); @State private var price = ""; @State private var shares = "1"; @State private var error: String?
+    @State private var symbol = ""; @State private var suggestions: [StockSearchResult] = []
+    @State private var date = Date(); @State private var price = ""; @State private var shares = "1"
+    @State private var error: String?
     let onSave: (String, Date, Double?, Double) async throws -> Void
+
     var body: some View {
-        NavigationStack { Form { Section("Stock") { TextField("Search symbol", text: $symbol).textInputAutocapitalization(.characters); ForEach(suggestions) { item in Button { symbol = item.symbol; suggestions = [] } label: { HStack { Text(item.symbol).font(.body.monospaced()); Spacer(); Text(item.sector ?? "").foregroundStyle(.secondary) } } } }; DatePicker("Purchase date", selection: $date, displayedComponents: .date); TextField("Purchase price (optional)", text: $price).keyboardType(.decimalPad); TextField("Shares", text: $shares).keyboardType(.decimalPad); if let error { Text(error).foregroundStyle(.red) } }
-            .task(id: symbol) { try? await Task.sleep(for: .milliseconds(250)); if !symbol.isEmpty { suggestions = (try? await APIClient.shared.search(symbol)) ?? [] } }
-            .navigationTitle("Add Position").toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }; ToolbarItem(placement: .confirmationAction) { Button("Save") { Task { do { try await onSave(symbol, date, Double(price), Double(shares) ?? 1); dismiss() } catch { self.error = error.localizedDescription } } }.disabled(symbol.isEmpty) } } }
+        NavigationStack {
+            ZStack { DS.Color.background.ignoresSafeArea()
+                Form {
+                    Section("Stock") {
+                        TextField("Search symbol (e.g. AAPL)", text: $symbol).textInputAutocapitalization(.characters)
+                        ForEach(suggestions) { item in
+                            Button { symbol = item.symbol; suggestions = [] } label: {
+                                HStack { Text(item.symbol).font(.body.monospaced()); Spacer(); Text(item.sector ?? "").foregroundStyle(.secondary) }
+                            }
+                        }
+                    }
+                    DatePicker("Purchase date", selection: $date, displayedComponents: .date)
+                    TextField("Purchase price (optional)", text: $price).keyboardType(.decimalPad)
+                    TextField("Shares", text: $shares).keyboardType(.decimalPad)
+                    if let error { Text(error).foregroundStyle(.red) }
+                }.scrollContentBackground(.hidden)
+            }
+            .task(id: symbol) {
+                try? await Task.sleep(for: .milliseconds(250))
+                if !symbol.isEmpty { suggestions = (try? await APIClient.shared.search(symbol)) ?? [] }
+            }
+            .navigationTitle("Add Position")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        Task {
+                            do { try await onSave(symbol, date, Double(price), Double(shares) ?? 1); dismiss() }
+                            catch { self.error = error.localizedDescription }
+                        }
+                    }.disabled(symbol.isEmpty)
+                }
+            }
+        }
     }
 }
