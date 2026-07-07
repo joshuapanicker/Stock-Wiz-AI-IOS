@@ -56,11 +56,8 @@ struct MarketChatView: View {
     }
 
     private var assistantBackground: some View {
-        ZStack(alignment: .top) {
-            DS.Color.background.ignoresSafeArea()
-            DS.Gradient.ambientGreen(opacity: 0.14).frame(height: 540).ignoresSafeArea()
-            DS.Gradient.ambientViolet(opacity: 0.07).frame(height: 700).ignoresSafeArea()
-        }
+        // The AI screen breathes violet — the color the app reserves for intelligence
+        DSAuroraBackground(primary: DS.Color.violet, secondary: DS.Color.accent, intensity: 0.9)
     }
 
     private var welcome: some View {
@@ -68,12 +65,12 @@ struct MarketChatView: View {
             VStack(alignment: .leading, spacing: 14) {
                 HStack {
                     ZStack {
-                        Circle().fill(DS.Color.accent.opacity(0.13))
-                        Circle().stroke(DS.Color.accent.opacity(0.3))
-                        Image(systemName: "sparkles").font(.title2).foregroundStyle(DS.Color.accent)
-                    }.frame(width: 58, height: 58)
+                        Circle().fill(AngularGradient(colors: [DS.Color.violet.opacity(0.45), DS.Color.accent.opacity(0.2), DS.Color.violet.opacity(0.45)], center: .center))
+                        Circle().fill(DS.Color.background).padding(4)
+                        Image(systemName: "sparkles").font(.title2).foregroundStyle(DS.Color.violet)
+                    }.frame(width: 58, height: 58).shadow(color: DS.Color.violet.opacity(0.3), radius: 12)
                     Spacer()
-                    DSLiveDot()
+                    DSLiveDot(color: DS.Color.violet)
                 }
                 Text("Market Assistant").font(.system(size: 31, weight: .bold, design: .rounded)).tracking(-0.8).foregroundStyle(DS.Color.textPrimary)
                 Text("Move from question to investment insight with a context-aware assistant built for market research.").font(.subheadline).foregroundStyle(DS.Color.textSecondary).lineSpacing(4)
@@ -84,8 +81,14 @@ struct MarketChatView: View {
                 }
             }
             .padding(20)
-            .background(DS.Gradient.heroCard, in: RoundedRectangle(cornerRadius: DS.Radius.xlarge))
-            .overlay(RoundedRectangle(cornerRadius: DS.Radius.xlarge).stroke(LinearGradient(colors: [DS.Color.accent.opacity(0.32), DS.Color.border], startPoint: .topLeading, endPoint: .bottomTrailing)))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DS.Radius.xlarge))
+            .background(
+                LinearGradient(colors: [DS.Color.violet.opacity(0.14), DS.Color.accent.opacity(0.05), SwiftUI.Color.white.opacity(0.02)],
+                               startPoint: .topLeading, endPoint: .bottomTrailing),
+                in: RoundedRectangle(cornerRadius: DS.Radius.xlarge)
+            )
+            .overlay(RoundedRectangle(cornerRadius: DS.Radius.xlarge).stroke(LinearGradient(colors: [DS.Color.violet.opacity(0.35), DS.Color.border], startPoint: .topLeading, endPoint: .bottomTrailing)))
+            .shadow(color: DS.Color.violet.opacity(0.10), radius: 22, y: 10)
 
             HStack {
                 Text("START A RESEARCH THREAD").font(.caption2.bold()).tracking(1.2).foregroundStyle(DS.Color.textSecondary)
@@ -95,13 +98,14 @@ struct MarketChatView: View {
                 ForEach(prompts, id: \.2) { icon, title, prompt in
                     Button { Task { await model.send(prompt) } } label: {
                         VStack(alignment: .leading, spacing: 9) {
-                            Image(systemName: icon).foregroundStyle(DS.Color.accent)
+                            Image(systemName: icon).foregroundStyle(DS.Color.violet)
                             Text(title).font(.subheadline.bold()).foregroundStyle(DS.Color.textPrimary)
                             Text(prompt).font(.caption2).foregroundStyle(DS.Color.textSecondary).lineLimit(2).multilineTextAlignment(.leading)
                         }
                         .frame(maxWidth: .infinity, minHeight: 92, alignment: .leading)
                         .padding(14)
-                        .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.large))
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DS.Radius.large))
+                        .background(DS.Color.glassFill, in: RoundedRectangle(cornerRadius: DS.Radius.large))
                         .overlay(RoundedRectangle(cornerRadius: DS.Radius.large).stroke(DS.Color.border))
                     }.buttonStyle(.plain)
                 }
@@ -116,49 +120,53 @@ struct MarketChatView: View {
             if msg.role == "user" { Spacer(minLength: 38) }
             if msg.role != "user" {
                 ZStack {
-                    Circle().fill(DS.Color.accent.opacity(0.12))
-                    Image(systemName: "sparkles").font(.caption).foregroundStyle(DS.Color.accent)
+                    Circle().fill(DS.Color.violet.opacity(0.14))
+                    Circle().stroke(DS.Color.violet.opacity(0.3))
+                    Image(systemName: "sparkles").font(.caption).foregroundStyle(DS.Color.violet)
                 }.frame(width: 30, height: 30)
             }
             VStack(alignment: .leading, spacing: 7) {
                 Text(msg.role == "user" ? "YOU" : "STOCKWIZ INTELLIGENCE")
                     .font(.system(size: 9, weight: .bold)).tracking(1)
-                    .foregroundStyle(msg.role == "user" ? DS.Color.textSecondary : DS.Color.accent)
+                    .foregroundStyle(msg.role == "user" ? DS.Color.textSecondary : DS.Color.violet)
                 Text(msg.content.isEmpty ? "Analyzing…" : msg.content)
                     .font(.subheadline).lineSpacing(4).textSelection(.enabled)
                     .foregroundStyle(DS.Color.textPrimary)
             }
             .padding(14)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DS.Radius.large))
             .background(
-                msg.role == "user" ? DS.Color.surface : DS.Color.accent.opacity(0.055),
+                msg.role == "user" ? AnyShapeStyle(DS.Color.glassFill) : AnyShapeStyle(DS.Color.violet.opacity(0.07)),
                 in: RoundedRectangle(cornerRadius: DS.Radius.large)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: DS.Radius.large)
-                    .stroke(msg.role == "user" ? DS.Color.border : DS.Color.accent.opacity(0.13))
+                    .stroke(msg.role == "user" ? DS.Color.border : DS.Color.violet.opacity(0.16))
             )
             if msg.role != "user" { Spacer(minLength: 20) }
         }
     }
 
-    private var thinkingIndicator: some View { HStack(spacing: 7) { ProgressView().controlSize(.small).tint(DS.Color.accent); Text("Reading the market…").font(.caption).foregroundStyle(DS.Color.textSecondary); Spacer() }.padding(.leading, 40) }
+    private var thinkingIndicator: some View { HStack(spacing: 7) { ProgressView().controlSize(.small).tint(DS.Color.violet); Text("Reading the market…").font(.caption).foregroundStyle(DS.Color.textSecondary); Spacer() }.padding(.leading, 40) }
 
     private var composer: some View {
         HStack(alignment: .bottom, spacing: 10) {
-            Image(systemName: "sparkles").foregroundStyle(DS.Color.accent).padding(.bottom, 8)
+            Image(systemName: "sparkles").foregroundStyle(DS.Color.violet).padding(.bottom, 8)
             TextField("Ask about a stock, sector, or strategy…", text: Binding(get: { model.input }, set: { model.input = $0 }), axis: .vertical)
                 .lineLimit(1...5).padding(.vertical, 8)
             Button { Task { await model.send() } } label: {
                 Image(systemName: "arrow.up").font(.headline.bold()).frame(width: 38, height: 38)
-                    .background(model.input.isEmpty ? DS.Color.surface : DS.Color.accent, in: Circle())
-                    .foregroundStyle(model.input.isEmpty ? DS.Color.textTertiary : DS.Color.background)
+                    .background(model.input.isEmpty ? AnyShapeStyle(DS.Color.glassFill) : AnyShapeStyle(DS.Color.violet), in: Circle())
+                    .foregroundStyle(model.input.isEmpty ? DS.Color.textTertiary : .white)
+                    .shadow(color: model.input.isEmpty ? .clear : DS.Color.violet.opacity(0.45), radius: 8)
             }.disabled(model.input.isEmpty || model.streaming)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DS.Radius.xlarge))
+        .background(DS.Color.background.opacity(0.5), in: RoundedRectangle(cornerRadius: DS.Radius.xlarge))
         .overlay(RoundedRectangle(cornerRadius: DS.Radius.xlarge).stroke(DS.Color.border))
-        .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
+        .shadow(color: .black.opacity(0.3), radius: 14, y: 5)
     }
 
     private var historySheet: some View { NavigationStack { List { if model.sessions.isEmpty { ContentUnavailableView("No conversations", systemImage: "bubble.left.and.bubble.right") }; ForEach(model.sessions) { chat in Button { model.select(chat.id); showingHistory = false } label: { HStack { Image(systemName: "bubble.left.fill").foregroundStyle(.green); VStack(alignment: .leading, spacing: 4) { Text(chat.title).foregroundStyle(.primary); Text(chat.createdAt, style: .date).font(.caption).foregroundStyle(.secondary) }; Spacer(); Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary) } }.buttonStyle(.plain) }.onDelete { offsets in offsets.map { model.sessions[$0].id }.forEach(model.delete) } }.navigationTitle("Research History").toolbar { Button("Done") { showingHistory = false } } } }

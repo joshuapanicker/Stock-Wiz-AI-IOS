@@ -6,8 +6,7 @@ struct ProfileView: View {
     var body: some View {
         NavigationStack {
             ZStack(alignment: .top) {
-                DS.Color.background.ignoresSafeArea()
-                DS.Gradient.ambientGreen(opacity: 0.09).frame(height: 400).ignoresSafeArea()
+                DSAuroraBackground(intensity: 0.7)
 
                 ScrollView(showsIndicators: false) {
                     VStack(spacing: 16) {
@@ -17,8 +16,11 @@ struct ProfileView: View {
                         // MARK: Settings section
                         sectionCard(title: "SETTINGS") {
                             navRow("Investment Profile",      icon: "person.text.rectangle.fill", tint: DS.Color.sky,    destination: AnyView(InvestmentProfileView()))
+                            Divider().background(DS.Color.border)
                             navRow("Buy, Watch & Sell Rules", icon: "checklist",                  tint: DS.Color.accent, destination: AnyView(CriteriaSettingsView()))
+                            Divider().background(DS.Color.border)
                             navRow("Price Alerts",            icon: "bell.fill",                  tint: DS.Color.amber,  destination: AnyView(AlertsSettingsView()))
+                            Divider().background(DS.Color.border)
                             navRow("Brokerage Accounts",      icon: "building.columns.fill",       tint: DS.Color.violet, destination: AnyView(BrokerageSettingsView()))
                         }
 
@@ -48,7 +50,7 @@ struct ProfileView: View {
                         }
 
                         // MARK: Version footer
-                        Text("StockWiz · AI-powered market intelligence")
+                        Text("StockWiz for iOS")
                             .font(.caption2)
                             .foregroundStyle(DS.Color.textTertiary)
                             .frame(maxWidth: .infinity, alignment: .center)
@@ -64,29 +66,54 @@ struct ProfileView: View {
     }
 
     // MARK: User card
-    private var userCard: some View {
-        HStack(spacing: 14) {
-            ZStack {
-                Circle()
-                    .fill(DS.Color.accent.opacity(0.12))
-                Circle()
-                    .stroke(DS.Color.accent.opacity(0.3))
-                Image(systemName: "person.fill")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(DS.Color.accent)
-            }
-            .frame(width: 54, height: 54)
+    /// Monogram derived from the account email, e.g. "joshua@…" → "J"
+    private var monogram: String {
+        let email = authStore.session?.user.email ?? "S"
+        return String(email.prefix(1)).uppercased()
+    }
 
-            VStack(alignment: .leading, spacing: 4) {
-                Text("StockWiz Investor")
-                    .font(.system(size: 16, weight: .bold))
-                    .foregroundStyle(DS.Color.textPrimary)
-                Text(authStore.session?.user.email ?? "Signed in")
-                    .font(.caption)
-                    .foregroundStyle(DS.Color.textSecondary)
+    private var userCard: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 16) {
+                // Gradient-ring monogram avatar
+                ZStack {
+                    Circle()
+                        .stroke(
+                            AngularGradient(colors: [DS.Color.accent, DS.Color.violet, DS.Color.sky, DS.Color.accent], center: .center),
+                            lineWidth: 2.5
+                        )
+                    Circle()
+                        .fill(DS.Color.surfaceHigh)
+                        .padding(5)
+                    Text(monogram)
+                        .font(.system(size: 24, weight: .bold, design: .rounded))
+                        .foregroundStyle(DS.Color.accent)
+                }
+                .frame(width: 62, height: 62)
+                .shadow(color: DS.Color.accent.opacity(0.25), radius: 12)
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("StockWiz Investor")
+                        .font(.system(size: 17, weight: .bold, design: .rounded))
+                        .foregroundStyle(DS.Color.textPrimary)
+                    Text(authStore.session?.user.email ?? "Signed in")
+                        .font(.caption)
+                        .foregroundStyle(DS.Color.textSecondary)
+                        .lineLimit(1)
+                }
+                Spacer()
+                DSBadge("PRO", color: DS.Color.accent, solid: true)
             }
-            Spacer()
-            DSBadge("PRO", color: DS.Color.accent)
+
+            Divider().background(DS.Color.border)
+
+            HStack {
+                Label("AI-powered market intelligence", systemImage: "sparkles")
+                    .font(.caption2)
+                    .foregroundStyle(DS.Color.textTertiary)
+                Spacer()
+                DSLiveDot()
+            }
         }
         .dsHeroCard()
     }
@@ -123,7 +150,7 @@ struct ProfileView: View {
                     .font(.caption2)
                     .foregroundStyle(DS.Color.textTertiary)
             }
-            .padding(.vertical, 4)
+            .padding(.vertical, 8)
         }
         .buttonStyle(.plain)
     }

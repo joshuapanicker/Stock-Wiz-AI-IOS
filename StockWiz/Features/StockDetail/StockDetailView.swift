@@ -91,8 +91,11 @@ struct StockDetailView: View {
 
     var body: some View {
         ZStack(alignment: .top) {
-            DS.Color.background.ignoresSafeArea()
-            DS.Gradient.ambientGreen(opacity: 0.10).frame(height: 400).ignoresSafeArea()
+            DSAuroraBackground(
+                primary: model.action == "sell" ? DS.Color.rose : DS.Color.accent,
+                secondary: model.action == "sell" ? DS.Color.amber : DS.Color.violet,
+                intensity: 0.8
+            )
 
             ScrollView(showsIndicators: false) {
                 if model.isLoading {
@@ -186,27 +189,52 @@ struct StockDetailView: View {
     }
 
     // MARK: Header
+    /// Day change computed from the last two closes in history
+    private var dayChange: (abs: Double, pct: Double)? {
+        guard model.history.count >= 2 else { return nil }
+        let last = model.history[model.history.count - 1].close
+        let prev = model.history[model.history.count - 2].close
+        guard prev != 0 else { return nil }
+        return (last - prev, (last - prev) / prev * 100)
+    }
+
     private var header: some View {
         let card = VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(model.symbol)
-                        .font(.system(size: 13, weight: .semibold))
-                        .tracking(0.5)
-                        .foregroundStyle(DS.Color.textSecondary)
-                    Text(ValueFormatting.currency(model.displayPrice))
-                        .font(.system(size: 34, weight: .bold, design: .rounded))
-                        .foregroundStyle(DS.Color.textPrimary)
+                HStack(spacing: 9) {
+                    TickerLogo(symbol: model.symbol, size: 34)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.symbol)
+                            .font(.system(size: 13, weight: .bold, design: .monospaced))
+                            .tracking(0.5)
+                            .foregroundStyle(DS.Color.textPrimary)
+                        if let sector = model.displayMetrics?.sector {
+                            Text(sector.uppercased())
+                                .font(.system(size: 8, weight: .bold))
+                                .tracking(0.8)
+                                .foregroundStyle(DS.Color.textTertiary)
+                        }
+                    }
                 }
                 Spacer()
                 classificationBadge
             }
 
+            VStack(alignment: .leading, spacing: 3) {
+                Text(ValueFormatting.currency(model.displayPrice))
+                    .font(.system(size: 42, weight: .bold, design: .rounded))
+                    .foregroundStyle(DS.Color.textPrimary)
+                    .contentTransition(.numericText())
+                    .minimumScaleFactor(0.7)
+                if let change = dayChange {
+                    Text("\(change.abs >= 0 ? "▲" : "▼") \(abs(change.abs), specifier: "%.2f") (\(abs(change.pct), specifier: "%.2f")%) today")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(change.abs >= 0 ? DS.Color.gain : DS.Color.loss)
+                }
+            }
+
             if let metrics = model.displayMetrics {
                 HStack(spacing: 8) {
-                    if let sector = metrics.sector {
-                        DSBadge(sector, color: DS.Color.sky)
-                    }
                     if let industry = metrics.industry {
                         Text(industry)
                             .font(.caption2)
@@ -244,12 +272,13 @@ struct StockDetailView: View {
 
             Text(label)
                 .font(.system(size: 11, weight: .bold))
-                .tracking(0.5)
-                .foregroundStyle(color)
-                .padding(.horizontal, 12)
+                .tracking(0.8)
+                .foregroundStyle(isBuy ? DS.Color.background : color)
+                .padding(.horizontal, 13)
                 .padding(.vertical, 6)
-                .background(color.opacity(0.12), in: Capsule())
-                .overlay(Capsule().stroke(color.opacity(0.3)))
+                .background(isBuy ? AnyShapeStyle(color) : AnyShapeStyle(color.opacity(0.13)), in: Capsule())
+                .overlay(Capsule().stroke(color.opacity(isBuy ? 0 : 0.3)))
+                .shadow(color: isBuy ? color.opacity(0.5) : .clear, radius: 9)
         } else {
             ProgressView()
                 .controlSize(.small)
@@ -307,7 +336,8 @@ struct StockDetailView: View {
                 }
         }
         .padding(16)
-        .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.xlarge))
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DS.Radius.xlarge))
+        .background(DS.Color.glassFill, in: RoundedRectangle(cornerRadius: DS.Radius.xlarge))
         .overlay(RoundedRectangle(cornerRadius: DS.Radius.xlarge).stroke(DS.Color.border))
     }
 
@@ -376,7 +406,7 @@ struct StockDetailView: View {
                             .padding(.horizontal, 16)
                             .padding(.vertical, 7)
                             .background(
-                                selectedSection == section ? DS.Color.accent : DS.Color.surface,
+                                selectedSection == section ? AnyShapeStyle(DS.Color.accent) : AnyShapeStyle(DS.Color.glassFill),
                                 in: Capsule()
                             )
                             .overlay(
@@ -384,6 +414,7 @@ struct StockDetailView: View {
                                     ? nil
                                     : Capsule().stroke(DS.Color.border)
                             )
+                            .shadow(color: selectedSection == section ? DS.Color.accent.opacity(0.35) : .clear, radius: 8)
                     }
                     .buttonStyle(.plain)
                 }
@@ -434,10 +465,12 @@ struct StockDetailView: View {
                     ? (result.passed ? "SELL" : "HOLD")
                     : (result.passed ? "BUY"  : "WATCH")
 
-                HStack {
+                HStack(spacing: 14) {
+                    DSCriteriaRing(met: result.rulesMet, total: result.rulesTotal,
+                                   color: passColor, size: 54)
                     DSSectionHeader(title: title, subtitle: "\(result.rulesMet) of \(result.rulesTotal) conditions met")
                     Spacer()
-                    DSBadge(passLabel, color: passColor)
+                    DSBadge(passLabel, color: passColor, solid: result.passed)
                 }
                 VStack(spacing: 10) {
                     ForEach(result.details) { rule in

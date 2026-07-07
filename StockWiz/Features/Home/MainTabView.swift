@@ -23,10 +23,10 @@ struct MainTabView: View {
                     .toolbar(.hidden, for: .tabBar)
             }
 
-            // Custom floating tab bar
+            // Floating glass tab bar — icon-only, glow marks the active tab
             floatingTabBar
-                .padding(.horizontal, 24)
-                .padding(.bottom, 8)
+                .padding(.horizontal, 44)
+                .padding(.bottom, 12)
         }
         .ignoresSafeArea(edges: .bottom)
     }
@@ -38,19 +38,19 @@ struct MainTabView: View {
             tabItem(index: 2, icon: "sparkles", label: "AI Chat")
             tabItem(index: 3, icon: "person.fill", label: "Profile")
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DS.Radius.xxlarge))
-        .overlay(
-            RoundedRectangle(cornerRadius: DS.Radius.xxlarge)
-                .stroke(DS.Color.border)
-        )
-        .shadow(color: .black.opacity(0.35), radius: 20, y: 8)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 13)
+        .background(.ultraThinMaterial, in: Capsule())
+        .background(DS.Color.background.opacity(0.55), in: Capsule())
+        .overlay(Capsule().stroke(DS.Color.border))
+        .shadow(color: .black.opacity(0.4), radius: 22, y: 10)
     }
 
     @ViewBuilder
     private func tabItem(index: Int, icon: String, label: String) -> some View {
         let isActive = selectedTab == index
+        // AI Chat gets the violet accent; everything else pulses teal
+        let accent: Color = index == 2 ? DS.Color.violet : DS.Color.accent
         Button {
             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                 selectedTab = index
@@ -58,17 +58,19 @@ struct MainTabView: View {
         } label: {
             VStack(spacing: 5) {
                 Image(systemName: icon)
-                    .font(.system(size: 18, weight: isActive ? .semibold : .regular))
+                    .font(.system(size: 19, weight: isActive ? .semibold : .regular))
                     .symbolRenderingMode(.hierarchical)
-                    .foregroundStyle(isActive ? DS.Color.accent : DS.Color.textTertiary)
-                Text(label)
-                    .font(.system(size: 9, weight: isActive ? .semibold : .regular))
-                    .foregroundStyle(isActive ? DS.Color.accent : DS.Color.textTertiary)
+                    .foregroundStyle(isActive ? accent : DS.Color.textTertiary)
+                    .shadow(color: isActive ? accent.opacity(0.65) : .clear, radius: 7)
+                Circle()
+                    .fill(isActive ? accent : .clear)
+                    .frame(width: 4, height: 4)
             }
             .frame(maxWidth: .infinity)
-            .padding(.vertical, 4)
+            .padding(.vertical, 2)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel(label)
     }
 }

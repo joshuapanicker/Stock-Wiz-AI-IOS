@@ -85,9 +85,10 @@ struct PortfolioView: View {
     var body: some View {
         NavigationStack {
             ZStack(alignment: .top) {
-                DS.Color.background.ignoresSafeArea()
-                DS.Gradient.ambientGreen(opacity: 0.11).frame(height: 500).ignoresSafeArea()
-                DS.Gradient.ambientViolet(opacity: 0.07).frame(height: 650).ignoresSafeArea()
+                DSAuroraBackground(
+                    primary: model.netGain >= 0 ? DS.Color.accent : DS.Color.rose,
+                    intensity: 0.9
+                )
                 Group {
                     if model.isLoading && model.holdings.isEmpty && model.soldPositions.isEmpty {
                         loadingView
@@ -194,16 +195,25 @@ struct PortfolioView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Total Value").font(.caption).foregroundStyle(DS.Color.textSecondary)
                 Text(ValueFormatting.currency(model.totalValue))
-                    .font(.system(size: 38, weight: .bold, design: .rounded))
-                    .foregroundStyle(DS.Color.textPrimary).minimumScaleFactor(0.7)
+                    .font(DS.Font.portfolioValue)
+                    .foregroundStyle(DS.Color.textPrimary)
+                    .contentTransition(.numericText())
+                    .minimumScaleFactor(0.7)
             }
             HStack(spacing: 16) {
                 Label("\(model.holdings.count) positions", systemImage: "square.stack.3d.up")
                     .font(.caption).foregroundStyle(DS.Color.textSecondary)
                 Spacer()
-                Text(model.netGain >= 0 ? "+\(ValueFormatting.currency(model.netGain))" : ValueFormatting.currency(model.netGain))
-                    .font(.system(size: 14, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(model.netGain >= 0 ? DS.Color.gain : DS.Color.loss)
+                HStack(spacing: 4) {
+                    Image(systemName: model.netGain >= 0 ? "arrow.up.right" : "arrow.down.right")
+                        .font(.system(size: 10, weight: .bold))
+                    Text((model.netGain >= 0 ? "+" : "") + ValueFormatting.currency(model.netGain))
+                        .font(.system(size: 13, weight: .bold, design: .monospaced))
+                }
+                .foregroundStyle(model.netGain >= 0 ? DS.Color.gain : DS.Color.loss)
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background((model.netGain >= 0 ? DS.Color.gain : DS.Color.loss).opacity(0.12), in: Capsule())
+                .overlay(Capsule().stroke((model.netGain >= 0 ? DS.Color.gain : DS.Color.loss).opacity(0.25)))
             }
         }.dsHeroCard()
     }
@@ -241,15 +251,41 @@ struct PortfolioView: View {
                 AxisGridLine(stroke: StrokeStyle(lineWidth: 0.5, dash: [4, 5])).foregroundStyle(DS.Color.border)
                 AxisValueLabel { if let amount = value.as(Double.self) { Text(compactCurrency(amount)).foregroundStyle(DS.Color.textSecondary) } }
             }}
-            .chartPlotStyle { plot in plot.background(DS.Color.background.opacity(0.5)).clipShape(RoundedRectangle(cornerRadius: 8)) }
+            .chartPlotStyle { plot in plot.clipShape(RoundedRectangle(cornerRadius: 8)) }
             .frame(height: 180)
         }.dsCard()
     }
 
+    /// Combined portfolio value over time.
+    /// Starts at the first date where every holding has data (so the curve
+    /// never fake-dips when one position has a shorter history) and carries
+    /// each holding's last known price forward across missing dates.
     private var combinedHistory: [(String, Double)] {
-        var totals: [String: Double] = [:]
-        for h in model.holdings { for pt in h.history { totals[pt.date, default: 0] += pt.close * h.shares } }
-        return totals.sorted { $0.key < $1.key }.map { ($0.key, $0.value) }
+        let histories = model.holdings.filter { !$0.history.isEmpty }
+        guard !histories.isEmpty else { return [] }
+
+        // Union of all dates, starting where every holding has begun trading
+        let startDate = histories.compactMap { $0.history.first?.date }.max() ?? ""
+        let allDates = Set(histories.flatMap { $0.history.map(\.date) })
+            .filter { $0 >= startDate }
+            .sorted()
+        guard !allDates.isEmpty else { return [] }
+
+        // Fast per-holding lookup, then walk dates carrying prices forward
+        let priceMaps: [(shares: Double, prices: [String: Double])] = histories.map { h in
+            (h.shares, Dictionary(h.history.map { ($0.date, $0.close) }, uniquingKeysWith: { _, new in new }))
+        }
+        var lastPrice = [Int: Double]()
+        var points: [(String, Double)] = []
+        for date in allDates {
+            var total = 0.0
+            for (idx, entry) in priceMaps.enumerated() {
+                if let p = entry.prices[date] { lastPrice[idx] = p }
+                total += (lastPrice[idx] ?? 0) * entry.shares
+            }
+            points.append((date, total))
+        }
+        return points
     }
 
     private func compactCurrency(_ v: Double) -> String {
@@ -258,35 +294,63 @@ struct PortfolioView: View {
         return "$\(v.formatted(.number.precision(.fractionLength(0))))"
     }
 
-    // MARK: Allocation chart — donut left, legend with % right
+    // MARK: Allocation chart — donut with center total, top positions + Other
     private var allocationChart: some View {
         let total = model.holdings.compactMap(\.totalValue).reduce(0, +)
-        let slices: [(String, Double, Double)] = model.holdings.compactMap { h in
+        var slices: [(String, Double, Double)] = model.holdings.compactMap { h in
             guard let tv = h.totalValue, total > 0 else { return nil }
             return (h.symbol, tv, (tv / total) * 100)
         }.sorted { $0.1 > $1.1 }
 
-        let colors: [Color] = DS.Color.chartPalette
-        return VStack(alignment: .leading, spacing: 10) {
-            DSSectionHeader(title: "ALLOCATION", subtitle: "By current market value")
-            HStack(spacing: 16) {
-                // Donut
-                Chart(Array(slices.enumerated()), id: \.offset) { idx, slice in
-                    SectorMark(angle: .value("Value", slice.1), innerRadius: .ratio(0.58), angularInset: 2)
-                        .foregroundStyle(colors[idx % colors.count])
-                }
-                .frame(width: 120, height: 120)
+        // Bucket everything beyond the top 5 into "Other" so the donut and
+        // legend always agree and small slivers stay readable
+        if slices.count > 6 {
+            let rest = slices.dropFirst(5)
+            let restValue = rest.reduce(0) { $0 + $1.1 }
+            slices = Array(slices.prefix(5))
+            slices.append(("OTHER", restValue, total > 0 ? restValue / total * 100 : 0))
+        }
 
-                // Legend with percentages
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(Array(slices.prefix(6).enumerated()), id: \.offset) { idx, slice in
+        let colors: [Color] = DS.Color.chartPalette
+        return VStack(alignment: .leading, spacing: 14) {
+            DSSectionHeader(title: "ALLOCATION", subtitle: "By current market value")
+            HStack(spacing: 18) {
+                // Donut with center total
+                ZStack {
+                    Chart(Array(slices.enumerated()), id: \.offset) { idx, slice in
+                        SectorMark(angle: .value("Value", slice.1),
+                                   innerRadius: .ratio(0.68),
+                                   angularInset: 1.5)
+                            .foregroundStyle(colors[idx % colors.count])
+                            .cornerRadius(3)
+                    }
+                    VStack(spacing: 1) {
+                        Text(compactCurrency(total))
+                            .font(.system(size: 15, weight: .bold, design: .rounded))
+                            .foregroundStyle(DS.Color.textPrimary)
+                            .minimumScaleFactor(0.6)
+                        Text("TOTAL")
+                            .font(.system(size: 7, weight: .bold))
+                            .tracking(1)
+                            .foregroundStyle(DS.Color.textTertiary)
+                    }
+                    .frame(width: 78)
+                }
+                .frame(width: 132, height: 132)
+
+                // Legend with aligned percentages
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(Array(slices.enumerated()), id: \.offset) { idx, slice in
                         HStack(spacing: 8) {
-                            Circle().fill(colors[idx % colors.count]).frame(width: 8, height: 8)
-                            Text(slice.0).font(.system(size: 12, weight: .semibold, design: .monospaced))
-                                .foregroundStyle(DS.Color.textPrimary)
+                            RoundedRectangle(cornerRadius: 2)
+                                .fill(colors[idx % colors.count])
+                                .frame(width: 8, height: 8)
+                            Text(slice.0)
+                                .font(.system(size: 12, weight: .semibold, design: .monospaced))
+                                .foregroundStyle(slice.0 == "OTHER" ? DS.Color.textSecondary : DS.Color.textPrimary)
                             Spacer()
                             Text("\(slice.2.formatted(.number.precision(.fractionLength(1))))%")
-                                .font(.system(size: 11, design: .monospaced))
+                                .font(.system(size: 11, weight: .semibold, design: .monospaced))
                                 .foregroundStyle(DS.Color.textSecondary)
                         }
                     }
@@ -376,13 +440,14 @@ struct PortfolioView: View {
                     Image(systemName: "chevron.right").font(.caption2).foregroundStyle(DS.Color.textTertiary)
                 }
                 .padding(.horizontal, 14).padding(.vertical, 12)
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DS.Radius.large))
                 .background(
-                    holding.sellResult?.passed == true ? DS.Color.loss.opacity(0.05) : DS.Color.surface,
+                    holding.sellResult?.passed == true ? DS.Color.loss.opacity(0.06) : DS.Color.glassFill,
                     in: RoundedRectangle(cornerRadius: DS.Radius.large)
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: DS.Radius.large)
-                        .stroke(holding.sellResult?.passed == true ? DS.Color.loss.opacity(0.2) : DS.Color.border)
+                        .stroke(holding.sellResult?.passed == true ? DS.Color.loss.opacity(0.22) : DS.Color.border)
                 )
             }
             .buttonStyle(.plain)
@@ -457,7 +522,8 @@ struct PortfolioView: View {
                     }
                 }
                 .padding(.horizontal, 14).padding(.vertical, 10)
-                .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.medium))
+                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DS.Radius.medium))
+                .background(DS.Color.glassFill, in: RoundedRectangle(cornerRadius: DS.Radius.medium))
                 .overlay(RoundedRectangle(cornerRadius: DS.Radius.medium).stroke(DS.Color.border))
             }
         }

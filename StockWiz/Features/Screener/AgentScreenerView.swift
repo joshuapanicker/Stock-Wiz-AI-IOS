@@ -74,7 +74,7 @@ struct AgentScreenerView: View {
         @Bindable var model = model
         NavigationStack {
             ZStack(alignment: .top) {
-                screenerBackground
+                DSAuroraBackground()
                 ScrollView {
                     LazyVStack(spacing: 16) {
                         marketStrip
@@ -88,7 +88,7 @@ struct AgentScreenerView: View {
                         if model.results.isEmpty && !model.isSearching { signalResults }
                     }
                     .padding(.horizontal, 16)
-                    .padding(.bottom, 32)
+                    .padding(.bottom, 110)
                 }
             }
             .navigationTitle("Discover")
@@ -101,33 +101,47 @@ struct AgentScreenerView: View {
         }
     }
 
-    private var screenerBackground: some View {
-        ZStack(alignment: .top) {
-            DS.Color.background.ignoresSafeArea()
-            DS.Gradient.ambientGreen().frame(height: 430).ignoresSafeArea()
-            DS.Gradient.ambientViolet().frame(height: 600).ignoresSafeArea()
-            DS.Gradient.ambientSky(opacity: 0.04).frame(height: 350).ignoresSafeArea()
-        }
-    }
-
+    // MARK: Market mood strip
     private var marketStrip: some View {
         HStack(spacing: 12) {
-            HStack(spacing: 6) {
-                Circle().fill(market?.marketTrend == "bullish" ? Color.green : Color.orange).frame(width: 7, height: 7)
-                Text(market?.marketTrend.capitalized ?? "Market").fontWeight(.semibold)
+            HStack(spacing: 7) {
+                Circle()
+                    .fill(trendColor)
+                    .frame(width: 7, height: 7)
+                    .shadow(color: trendColor.opacity(0.8), radius: 4)
+                Text(market?.marketTrend.capitalized ?? "Market")
+                    .fontWeight(.bold)
+                    .foregroundStyle(trendColor)
             }
             Spacer()
-            marketPill("SPY", ValueFormatting.currency(market?.spyLatest), color: .primary)
-            marketPill("VIX", ValueFormatting.number(market?.vix, digits: 2), color: (market?.vix ?? 0) > 20 ? .orange : .green)
+            marketPill("SPY", ValueFormatting.currency(market?.spyLatest), color: DS.Color.textPrimary)
+            marketPill("VIX", ValueFormatting.number(market?.vix, digits: 2),
+                       color: (market?.vix ?? 0) > 20 ? DS.Color.warning : DS.Color.accent)
         }
-        .font(.caption.monospaced()).padding(.horizontal, 13).padding(.vertical, 10)
-        .background(.ultraThinMaterial, in: Capsule()).overlay(Capsule().stroke(DS.Color.border)).padding(.top, 8)
+        .font(.caption.monospaced())
+        .padding(.horizontal, 15).padding(.vertical, 11)
+        .background(.ultraThinMaterial, in: Capsule())
+        .background(DS.Color.glassFill, in: Capsule())
+        .overlay(Capsule().stroke(DS.Color.border))
+        .padding(.top, 8)
+    }
+
+    private var trendColor: Color {
+        switch market?.marketTrend {
+        case "bullish": DS.Color.accent
+        case "bearish": DS.Color.rose
+        default:        DS.Color.warning
+        }
     }
 
     private func marketPill(_ label: String, _ value: String, color: Color) -> some View {
-        HStack(spacing: 4) { Text(label).foregroundStyle(.secondary); Text(value).foregroundStyle(color).fontWeight(.semibold) }
+        HStack(spacing: 4) {
+            Text(label).foregroundStyle(DS.Color.textSecondary)
+            Text(value).foregroundStyle(color).fontWeight(.semibold)
+        }
     }
 
+    // MARK: Hero
     private var hero: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -136,22 +150,21 @@ struct AgentScreenerView: View {
                         .font(.system(size: 10, weight: .bold))
                         .tracking(1.5)
                         .foregroundStyle(DS.Color.accent)
-                    // Bold tracked headline — same family as DISCOVER label, scaled up
                     Text("Build a screen\nfrom an idea.")
-                        .font(.system(size: 27, weight: .bold))
+                        .font(.system(size: 28, weight: .bold, design: .rounded))
                         .tracking(-0.3)
                         .foregroundStyle(DS.Color.textPrimary)
                 }
                 Spacer(minLength: 12)
                 ZStack {
-                    Circle().fill(AngularGradient(colors: [DS.Color.accent.opacity(0.38), DS.Color.violet.opacity(0.18), DS.Color.amber.opacity(0.12), DS.Color.accent.opacity(0.38)], center: .center))
+                    Circle().fill(AngularGradient(colors: [DS.Color.accent.opacity(0.40), DS.Color.violet.opacity(0.22), DS.Color.sky.opacity(0.12), DS.Color.accent.opacity(0.40)], center: .center))
                     Circle().fill(DS.Color.background).padding(5)
                     Image(systemName: "chart.line.uptrend.xyaxis").font(.title2).foregroundStyle(DS.Color.accent)
-                }.frame(width: 60, height: 60).shadow(color: DS.Color.accent.opacity(0.2), radius: 15)
+                }.frame(width: 60, height: 60).shadow(color: DS.Color.accent.opacity(0.25), radius: 15)
             }
 
             Text("Describe what you're looking for and StockWiz turns it into ranked results.")
-                .font(.caption.monospaced())
+                .font(.caption)
                 .foregroundStyle(DS.Color.textSecondary)
                 .lineSpacing(4)
 
@@ -161,7 +174,7 @@ struct AgentScreenerView: View {
                 TextField("Try: profitable software under 25 P/E", text: Bindable(model).query, axis: .vertical)
                     .textInputAutocapitalization(.never)
                     .submitLabel(.search)
-                    .font(.caption.monospaced())
+                    .font(.caption)
                     .onSubmit { Task { await model.search() } }
                     .foregroundStyle(DS.Color.textPrimary)
                 if !model.query.isEmpty {
@@ -175,15 +188,18 @@ struct AgentScreenerView: View {
                         .frame(width: 34, height: 34)
                         .background(DS.Color.accent, in: Circle())
                         .foregroundStyle(DS.Color.background)
+                        .shadow(color: DS.Color.accent.opacity(0.4), radius: 8)
                 }.disabled(model.query.trimmingCharacters(in: .whitespaces).isEmpty || model.isSearching)
             }
             .padding(13)
-            .background(DS.Color.background.opacity(0.8), in: RoundedRectangle(cornerRadius: DS.Radius.large))
-            .overlay(RoundedRectangle(cornerRadius: DS.Radius.large).stroke(DS.Color.accent.opacity(0.24)))
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DS.Radius.large))
+            .background(DS.Color.background.opacity(0.45), in: RoundedRectangle(cornerRadius: DS.Radius.large))
+            .overlay(RoundedRectangle(cornerRadius: DS.Radius.large).stroke(DS.Color.accent.opacity(0.26)))
         }
-        .padding(.horizontal, 4)
+        .dsHeroCard()
     }
 
+    // MARK: Prompt chips
     private var promptChips: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
@@ -191,11 +207,13 @@ struct AgentScreenerView: View {
                     Button { Task { await model.search(prompt) } } label: {
                         VStack(alignment: .leading, spacing: 8) {
                             Image(systemName: ["cpu", "cross.case", "chart.line.uptrend.xyaxis", "building.columns", "cart", "bolt"][index])
-                            .foregroundStyle([DS.Color.accent, DS.Color.violet, DS.Color.sky, DS.Color.amber, DS.Color.mint, DS.Color.rose][index % 6])
-                            Text(prompt).font(.caption.weight(.medium)).foregroundStyle(.primary).lineLimit(2).multilineTextAlignment(.leading)
+                                .foregroundStyle([DS.Color.accent, DS.Color.violet, DS.Color.sky, DS.Color.amber, DS.Color.mint, DS.Color.rose][index % 6])
+                            Text(prompt).font(.caption.weight(.medium)).foregroundStyle(DS.Color.textPrimary).lineLimit(2).multilineTextAlignment(.leading)
                         }
                         .frame(width: 142, height: 64, alignment: .leading).padding(12)
-                        .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.medium)).overlay(RoundedRectangle(cornerRadius: DS.Radius.medium).stroke(DS.Color.border))
+                        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DS.Radius.medium))
+                        .background(DS.Color.glassFill, in: RoundedRectangle(cornerRadius: DS.Radius.medium))
+                        .overlay(RoundedRectangle(cornerRadius: DS.Radius.medium).stroke(DS.Color.border))
                     }.buttonStyle(.plain)
                 }
             }
@@ -204,29 +222,34 @@ struct AgentScreenerView: View {
 
     private var searching: some View {
         HStack(spacing: 10) {
-            ProgressView().tint(.green)
+            ProgressView().tint(DS.Color.accent)
             Text("Agent is filtering the stock universe…")
+                .foregroundStyle(DS.Color.textSecondary)
             Spacer()
         }
         .font(.subheadline)
-        .dashboardCard()
+        .dsCard()
     }
 
     private func errorCard(_ error: String) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            Label("Search failed", systemImage: "exclamationmark.triangle.fill").foregroundStyle(.red)
-            Text(error).font(.caption).foregroundStyle(.secondary)
-            Button("Try Again") { Task { await model.search() } }.tint(.green)
+            Label("Search failed", systemImage: "exclamationmark.triangle.fill").foregroundStyle(DS.Color.rose)
+            Text(error).font(.caption).foregroundStyle(DS.Color.textSecondary)
+            Button("Try Again") { Task { await model.search() } }.tint(DS.Color.accent)
         }
-        .dashboardCard()
+        .dsCard()
     }
 
     private var summaryCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            HStack { Label("Intelligence brief", systemImage: "sparkles").font(.caption.bold()).foregroundStyle(.green); Spacer(); Text("AI GENERATED").font(.system(size: 8, weight: .bold)).tracking(1).foregroundStyle(.tertiary) }
-            Text(model.summary).font(.subheadline).lineSpacing(3)
+            HStack {
+                Label("Intelligence brief", systemImage: "sparkles").font(.caption.bold()).foregroundStyle(DS.Color.violet)
+                Spacer()
+                Text("AI GENERATED").font(.system(size: 8, weight: .bold)).tracking(1).foregroundStyle(DS.Color.textTertiary)
+            }
+            Text(model.summary).font(.subheadline).lineSpacing(3).foregroundStyle(DS.Color.textPrimary)
         }
-        .dashboardCard()
+        .dsCard()
     }
 
     @ViewBuilder
@@ -244,29 +267,35 @@ struct AgentScreenerView: View {
                     ForEach(filters.labels, id: \.self) { label in
                         Text(label)
                             .font(.caption2)
-                            .foregroundStyle(.green)
+                            .foregroundStyle(DS.Color.accent)
                             .padding(.horizontal, 9)
                             .padding(.vertical, 5)
-                            .background(Color.green.opacity(0.1), in: Capsule())
-                            .overlay(Capsule().stroke(Color.green.opacity(0.25)))
+                            .background(DS.Color.accent.opacity(0.1), in: Capsule())
+                            .overlay(Capsule().stroke(DS.Color.accent.opacity(0.25)))
                     }
                 }
             }
         }
     }
 
+    // MARK: Signal board
     @ViewBuilder
     private var signalResults: some View {
         if !model.signals.isEmpty && model.query.isEmpty {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("TODAY'S SIGNAL BOARD").font(.caption.bold()).tracking(1.2).foregroundStyle(.secondary)
-                        Text("Personalized to your saved strategy").font(.caption2).foregroundStyle(.tertiary)
-                    }
+                    DSSectionHeader(title: "TODAY'S SIGNAL BOARD",
+                                    subtitle: "Personalized to your saved strategy")
                     Spacer()
-                    HStack(spacing: 5) { Circle().fill(.green).frame(width: 5, height: 5); Text("LIVE").font(.system(size: 9, weight: .bold)).tracking(1).foregroundStyle(.green) }
-                    Button { Task { await model.loadSignals() } } label: { Image(systemName: "arrow.clockwise").font(.caption).padding(8).background(Color.white.opacity(0.06), in: Circle()) }
+                    DSLiveDot()
+                    Button { Task { await model.loadSignals() } } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.caption)
+                            .foregroundStyle(DS.Color.textSecondary)
+                            .padding(8)
+                            .background(.ultraThinMaterial, in: Circle())
+                            .overlay(Circle().stroke(DS.Color.border))
+                    }
                 }
                 ForEach(Array(model.signals.enumerated()), id: \.element.id) { index, signal in
                     NavigationLink(value: signal.symbol) {
@@ -283,9 +312,9 @@ struct AgentScreenerView: View {
         if !model.results.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
-                    Text("MATCHES").font(.caption.bold()).foregroundStyle(.secondary)
+                    DSSectionHeader(title: "MATCHES")
                     Spacer()
-                    Text("\(model.totalMatched) stocks").font(.caption).foregroundStyle(.secondary)
+                    Text("\(model.totalMatched) stocks").font(.caption).foregroundStyle(DS.Color.textSecondary)
                 }
                 ForEach(Array(model.results.enumerated()), id: \.element.id) { index, stock in
                     NavigationLink(value: stock.symbol) {
@@ -329,6 +358,7 @@ private struct UniverseStockRow: View {
             Image(systemName: "chevron.right").font(.caption2).foregroundStyle(DS.Color.textTertiary)
         }
         .padding(15)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DS.Radius.large))
         .background(DS.Gradient.rowCard, in: RoundedRectangle(cornerRadius: DS.Radius.large))
         .overlay(RoundedRectangle(cornerRadius: DS.Radius.large).stroke(DS.Color.border))
     }
@@ -359,7 +389,8 @@ private struct SignalStockCard: View {
                     Text(ValueFormatting.currency(signal.metrics.closePrice))
                         .font(.subheadline.monospaced().bold())
                         .foregroundStyle(DS.Color.textPrimary)
-                    DSBadge(signal.classification.uppercased(), color: accent)
+                    DSBadge(signal.classification.uppercased(), color: accent,
+                            solid: signal.classification == "buy")
                 }
             }
             HStack(spacing: 10) {
@@ -367,17 +398,18 @@ private struct SignalStockCard: View {
                 metric("GROWTH",   ValueFormatting.percent(signal.metrics.revenueGrowth))
                 metric("MARGIN",   ValueFormatting.percent(signal.metrics.profitMargin))
                 Spacer(minLength: 0)
-                Text("\(result.rulesMet)/\(result.rulesTotal)")
-                    .font(.caption.monospaced().bold())
-                    .foregroundStyle(accent)
+                DSCriteriaRing(met: result.rulesMet, total: result.rulesTotal,
+                               color: accent, size: 34)
             }
         }
         .padding(15)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: DS.Radius.large))
         .background(
-            LinearGradient(colors: [accent.opacity(0.07), DS.Color.surface], startPoint: .topLeading, endPoint: .bottomTrailing),
+            LinearGradient(colors: [accent.opacity(0.09), DS.Color.glassFill],
+                           startPoint: .topLeading, endPoint: .bottomTrailing),
             in: RoundedRectangle(cornerRadius: DS.Radius.large)
         )
-        .overlay(RoundedRectangle(cornerRadius: DS.Radius.large).stroke(accent.opacity(0.18)))
+        .overlay(RoundedRectangle(cornerRadius: DS.Radius.large).stroke(accent.opacity(0.20)))
     }
 
     private func metric(_ title: String, _ value: String) -> some View {
@@ -385,15 +417,5 @@ private struct SignalStockCard: View {
             Text(title).font(.system(size: 8, weight: .bold)).tracking(0.7).foregroundStyle(DS.Color.textTertiary)
             Text(value).font(.caption2.monospaced()).foregroundStyle(DS.Color.textSecondary)
         }
-    }
-}
-
-private extension View {
-    func dashboardCard() -> some View {
-        self
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(15)
-            .background(DS.Color.surface, in: RoundedRectangle(cornerRadius: DS.Radius.large))
-            .overlay(RoundedRectangle(cornerRadius: DS.Radius.large).stroke(DS.Color.border))
     }
 }
