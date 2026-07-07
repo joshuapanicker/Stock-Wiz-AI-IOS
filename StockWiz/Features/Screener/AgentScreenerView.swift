@@ -163,7 +163,7 @@ struct AgentScreenerView: View {
                 }.frame(width: 60, height: 60).shadow(color: DS.Color.accent.opacity(0.25), radius: 15)
             }
 
-            Text("Describe what you're looking for and StockWiz turns it into ranked results.")
+            Text("Describe what you're looking for and StockWiz screens 5,700+ US stocks — every NASDAQ, NYSE & AMEX listing — into ranked results.")
                 .font(.caption)
                 .foregroundStyle(DS.Color.textSecondary)
                 .lineSpacing(4)
