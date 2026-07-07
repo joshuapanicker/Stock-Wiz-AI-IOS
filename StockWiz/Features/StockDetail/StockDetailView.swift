@@ -10,30 +10,45 @@ private final class StockDetailModel {
     var period = "1y"
     var history: [PriceBar] = []
     var benchmark: [PriceBar] = []
+    var metrics: StockMetrics?
     var analysis: AnalysisResult?
     var news: StockNews?
     var financials: Financials?
     var isLoading = true
     var isLoadingHistory = false
     var errorMessage: String?
+    /// Price captured from the search/list row the user tapped — shown
+    /// instantly while live data loads.
+    var seededPrice: Double?
 
     init(symbol: String, action: String = "buy") {
         self.symbol = symbol.uppercased()
         self.action = action
+        self.seededPrice = QuoteSeed.price(for: symbol)
+    }
+
+    /// Fast metrics (separate endpoint) arrive well before the AI analysis,
+    /// so prefer them and fall back to the analysis payload.
+    var displayMetrics: StockMetrics? { metrics ?? analysis?.metrics }
+
+    var displayPrice: Double? {
+        displayMetrics?.closePrice ?? history.last?.close ?? seededPrice
     }
 
     func load() async {
-        isLoading = true
-        errorMessage = nil
         isLoading = false
+        errorMessage = nil
+        isLoadingHistory = history.isEmpty
         await withTaskGroup(of: Void.self) { group in
-            group.addTask { let v = try? await APIClient.shared.history(symbol: self.symbol, period: self.period); await MainActor.run { self.history = v ?? [] } }
+            group.addTask { let v = try? await APIClient.shared.history(symbol: self.symbol, period: self.period); await MainActor.run { self.history = v ?? []; self.isLoadingHistory = false } }
+            group.addTask { let v = try? await APIClient.shared.metrics(symbol: self.symbol); await MainActor.run { self.metrics = v } }
             group.addTask { let v = try? await APIClient.shared.analysis(symbol: self.symbol, action: self.action); await MainActor.run { self.analysis = v } }
             group.addTask { let v = try? await APIClient.shared.news(symbol: self.symbol); await MainActor.run { self.news = v } }
             group.addTask { let v = try? await APIClient.shared.financials(symbol: self.symbol); await MainActor.run { self.financials = v } }
             group.addTask { let v = try? await APIClient.shared.history(symbol: "SPY", period: self.period); await MainActor.run { self.benchmark = v ?? [] } }
         }
-        if analysis == nil && history.isEmpty {
+        isLoadingHistory = false
+        if analysis == nil && metrics == nil && history.isEmpty {
             errorMessage = "We couldn't load \(symbol). Check your connection and try again."
         }
     }
@@ -115,7 +130,7 @@ struct StockDetailView: View {
             // We only need symbol + currentPrice for the sell flow
             SellFromDetailSheet(
                 symbol: model.symbol,
-                currentPrice: model.analysis?.metrics.closePrice ?? model.history.last?.close
+                currentPrice: model.displayPrice
             )
         }
     }
@@ -179,7 +194,7 @@ struct StockDetailView: View {
                         .font(.system(size: 13, weight: .semibold))
                         .tracking(0.5)
                         .foregroundStyle(DS.Color.textSecondary)
-                    Text(ValueFormatting.currency(model.analysis?.metrics.closePrice ?? model.history.last?.close))
+                    Text(ValueFormatting.currency(model.displayPrice))
                         .font(.system(size: 34, weight: .bold, design: .rounded))
                         .foregroundStyle(DS.Color.textPrimary)
                 }
@@ -187,7 +202,7 @@ struct StockDetailView: View {
                 classificationBadge
             }
 
-            if let metrics = model.analysis?.metrics {
+            if let metrics = model.displayMetrics {
                 HStack(spacing: 8) {
                     if let sector = metrics.sector {
                         DSBadge(sector, color: DS.Color.sky)
@@ -215,23 +230,31 @@ struct StockDetailView: View {
         }
     }
 
+    @ViewBuilder
     private var classificationBadge: some View {
-        let isBuy  = model.analysis?.criteriaResult.passed == true
-        let label  = model.action == "sell"
-            ? (isBuy ? "SELL" : "HOLD")
-            : (isBuy ? "BUY"  : "WATCH")
-        let color: Color = isBuy
-            ? (model.action == "sell" ? DS.Color.loss : DS.Color.gain)
-            : DS.Color.warning
+        // Don't show a misleading default badge while the analysis is loading
+        if let result = model.analysis?.criteriaResult {
+            let isBuy  = result.passed
+            let label  = model.action == "sell"
+                ? (isBuy ? "SELL" : "HOLD")
+                : (isBuy ? "BUY"  : "WATCH")
+            let color: Color = isBuy
+                ? (model.action == "sell" ? DS.Color.loss : DS.Color.gain)
+                : DS.Color.warning
 
-        return Text(label)
-            .font(.system(size: 11, weight: .bold))
-            .tracking(0.5)
-            .foregroundStyle(color)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(color.opacity(0.12), in: Capsule())
-            .overlay(Capsule().stroke(color.opacity(0.3)))
+            Text(label)
+                .font(.system(size: 11, weight: .bold))
+                .tracking(0.5)
+                .foregroundStyle(color)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .background(color.opacity(0.12), in: Capsule())
+                .overlay(Capsule().stroke(color.opacity(0.3)))
+        } else {
+            ProgressView()
+                .controlSize(.small)
+                .tint(DS.Color.textTertiary)
+        }
     }
 
     // MARK: Chart
@@ -383,7 +406,7 @@ struct StockDetailView: View {
     // MARK: Overview — shows sell criteria first when opened from portfolio
     private var overview: some View {
         VStack(spacing: 14) {
-            if let metrics = model.analysis?.metrics {
+            if let metrics = model.displayMetrics {
                 LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 10) {
                     DSStatTile(icon: "arrow.down.to.line", label: "52-wk Low",     value: ValueFormatting.currency(metrics.low52Week))
                     DSStatTile(icon: "arrow.up.to.line",   label: "52-wk High",    value: ValueFormatting.currency(metrics.high52Week))

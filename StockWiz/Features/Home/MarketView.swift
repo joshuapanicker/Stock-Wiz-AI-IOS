@@ -319,6 +319,7 @@ struct MarketView: View {
         try? await Task.sleep(for: .milliseconds(300))
         guard !Task.isCancelled else { return }
         do { results = try await APIClient.shared.search(normalized) } catch { results = [] }
+        for stock in results { QuoteSeed.seed(symbol: stock.symbol, price: stock.closePrice) }
         isSearching = false
     }
 }

@@ -178,6 +178,10 @@ extension APIClient {
         )
     }
 
+    func metrics(symbol: String) async throws -> StockMetrics {
+        try await get("/api/metrics/\(symbol.uppercased())")
+    }
+
     func analysis(symbol: String, action: String = "buy") async throws -> AnalysisResult {
         try await get(
             "/api/analyze/\(symbol.uppercased())",

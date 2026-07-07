@@ -16,6 +16,23 @@ struct MarketContext: Codable, Sendable {
     }
 }
 
+/// Last-known prices captured from search results and lists, so a freshly
+/// opened detail screen can show a price immediately instead of waiting on
+/// the network.
+@MainActor
+enum QuoteSeed {
+    private(set) static var prices: [String: Double] = [:]
+
+    static func seed(symbol: String, price: Double?) {
+        guard let price else { return }
+        prices[symbol.uppercased()] = price
+    }
+
+    static func price(for symbol: String) -> Double? {
+        prices[symbol.uppercased()]
+    }
+}
+
 struct StockSearchResult: Codable, Identifiable, Hashable, Sendable {
     var id: String { symbol }
     let symbol: String

@@ -26,6 +26,7 @@ private final class PortfolioModel {
         async let holdingsResult  = try? APIClient.shared.portfolio()
         async let soldResult      = try? APIClient.shared.soldPositions()
         if let h = await holdingsResult { holdings = h
+            for holding in h { QuoteSeed.seed(symbol: holding.symbol, price: holding.currentPrice) }
             if let data = try? JSONEncoder().encode(h) {
                 UserDefaults.standard.set(data, forKey: "cachedPortfolio")
             }

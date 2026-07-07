@@ -15,6 +15,7 @@ private final class AgentScreenerModel {
 
     func loadSignals() async {
         signals = (try? await APIClient.shared.screenerSignals()) ?? []
+        for signal in signals { QuoteSeed.seed(symbol: signal.symbol, price: signal.metrics.closePrice) }
     }
 
     func clear() {
@@ -45,6 +46,7 @@ private final class AgentScreenerModel {
                     results = event.results
                     filters = event.filters
                     totalMatched = event.totalMatched
+                    for stock in results { QuoteSeed.seed(symbol: stock.symbol, price: stock.closePrice) }
                 } else if let token = try? JSONDecoder().decode(StreamToken.self, from: data) {
                     summary += token.token
                 }
