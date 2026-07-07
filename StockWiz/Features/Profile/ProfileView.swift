@@ -2,6 +2,10 @@ import SwiftUI
 
 struct ProfileView: View {
     @Environment(AuthStore.self) private var authStore
+    @State private var credits: CreditsStatus?
+    @State private var showDeleteConfirm = false
+    @State private var deleting = false
+    @State private var deleteError: String?
 
     var body: some View {
         NavigationStack {
@@ -22,6 +26,8 @@ struct ProfileView: View {
                             navRow("Price Alerts",            icon: "bell.fill",                  tint: DS.Color.amber,  destination: AnyView(AlertsSettingsView()))
                             Divider().background(DS.Color.border)
                             navRow("Brokerage Accounts",      icon: "building.columns.fill",       tint: DS.Color.violet, destination: AnyView(BrokerageSettingsView()))
+                            Divider().background(DS.Color.border)
+                            creditsRow
                         }
 
                         // MARK: Security section
@@ -47,6 +53,32 @@ struct ProfileView: View {
                             }
                             .buttonStyle(.plain)
                             .padding(.vertical, 4)
+                            Divider().background(DS.Color.border)
+                            Button(role: .destructive) {
+                                showDeleteConfirm = true
+                            } label: {
+                                HStack(spacing: 12) {
+                                    ZStack {
+                                        Circle().fill(DS.Color.loss.opacity(0.12))
+                                        Image(systemName: "trash.fill")
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(DS.Color.loss)
+                                    }
+                                    .frame(width: 32, height: 32)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(deleting ? "Deleting…" : "Delete Account")
+                                            .font(.subheadline)
+                                            .foregroundStyle(DS.Color.loss)
+                                        if let deleteError {
+                                            Text(deleteError).font(.caption2).foregroundStyle(DS.Color.loss)
+                                        }
+                                    }
+                                    Spacer()
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(deleting)
+                            .padding(.vertical, 4)
                         }
 
                         // MARK: Version footer
@@ -62,7 +94,61 @@ struct ProfileView: View {
             }
             .navigationTitle("Profile")
             .navigationBarTitleDisplayMode(.large)
+            .task { credits = try? await APIClient.shared.credits() }
+            .confirmationDialog(
+                "Delete your account?",
+                isPresented: $showDeleteConfirm,
+                titleVisibility: .visible
+            ) {
+                Button("Delete Account", role: .destructive) {
+                    Task { await deleteAccount() }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This permanently deletes your account, portfolio, alerts, criteria, brokerage connections, and AI usage data. This cannot be undone.")
+            }
         }
+    }
+
+    private func deleteAccount() async {
+        deleting = true; deleteError = nil
+        do {
+            try await APIClient.shared.deleteAccount()
+            await authStore.signOut()
+        } catch {
+            deleteError = error.localizedDescription
+            deleting = false
+        }
+    }
+
+    // MARK: AI Credits row
+    private var creditsRow: some View {
+        NavigationLink(destination: CreditsSettingsView()) {
+            HStack(spacing: 12) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 7)
+                        .fill(DS.Color.violet.opacity(0.12))
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(DS.Color.violet)
+                }
+                .frame(width: 32, height: 32)
+                Text("AI Credits")
+                    .font(.subheadline)
+                    .foregroundStyle(DS.Color.textPrimary)
+                Spacer()
+                if let credits, !credits.hasOwnKey, credits.warning || credits.exhausted {
+                    Circle()
+                        .fill(credits.exhausted ? DS.Color.rose : DS.Color.amber)
+                        .frame(width: 7, height: 7)
+                }
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(DS.Color.textTertiary)
+            }
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: User card

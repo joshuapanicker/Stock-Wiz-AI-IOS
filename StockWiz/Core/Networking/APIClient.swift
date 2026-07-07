@@ -10,6 +10,7 @@ actor APIClient {
         case invalidResponse
         case decoding(String)
         case server(status: Int, message: String)
+        case creditsExhausted(String)
 
         var errorDescription: String? {
             switch self {
@@ -18,8 +19,23 @@ actor APIClient {
             case .invalidResponse: "The server returned an invalid response."
             case let .decoding(message): "StockWiz received unexpected data: \(message)"
             case let .server(status, message): "Server error \(status): \(message)"
+            case let .creditsExhausted(message): message
             }
         }
+    }
+
+    /// Decode a non-2xx response body into the right ClientError case.
+    /// Falls back to the raw body text if it isn't the expected `{"detail","code"}` shape.
+    nonisolated private func mapError(status: Int, data: Data) -> ClientError {
+        if let body = try? JSONDecoder().decode(APIErrorBody.self, from: data) {
+            if body.code == "credits_exhausted" {
+                return .creditsExhausted(body.detail ?? "You've used all your free AI credits for this month.")
+            }
+            if let detail = body.detail {
+                return .server(status: status, message: detail)
+            }
+        }
+        return .server(status: status, message: String(data: data, encoding: .utf8) ?? "Unknown error")
     }
 
     private let decoder = JSONDecoder()
@@ -82,10 +98,7 @@ actor APIClient {
         }
         guard let http = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
         guard 200..<300 ~= http.statusCode else {
-            throw ClientError.server(
-                status: http.statusCode,
-                message: String(data: data, encoding: .utf8) ?? "Unknown error"
-            )
+            throw mapError(status: http.statusCode, data: data)
         }
         return data
     }
@@ -143,7 +156,9 @@ actor APIClient {
                     let (bytes, response) = try await URLSession.shared.bytes(for: streamRequest)
                     guard let http = response as? HTTPURLResponse else { throw ClientError.invalidResponse }
                     guard 200..<300 ~= http.statusCode else {
-                        throw ClientError.server(status: http.statusCode, message: HTTPURLResponse.localizedString(forStatusCode: http.statusCode))
+                        var errorData = Data()
+                        for try await byte in bytes { errorData.append(byte) }
+                        throw self.mapError(status: http.statusCode, data: errorData)
                     }
                     for try await line in bytes.lines {
                         guard !Task.isCancelled else { break }
@@ -258,5 +273,18 @@ extension APIClient {
     }
     func disconnectBrokerage(id: String, removeHoldings: Bool) async throws {
         try await delete("/api/plaid/disconnect/\(id)", queryItems: [URLQueryItem(name: "remove_holdings", value: removeHoldings ? "true" : "false")])
+    }
+
+    func credits() async throws -> CreditsStatus { try await get("/api/credits") }
+    func setAPIKey(_ key: String) async throws -> CreditsStatus {
+        struct Body: Encodable { let api_key: String }
+        return try await send("/api/credits/key", method: "POST", body: Body(api_key: key))
+    }
+    func removeAPIKey() async throws -> CreditsStatus {
+        let data = try await request(path: "/api/credits/key", method: "DELETE")
+        return try decoder.decode(CreditsStatus.self, from: data)
+    }
+    func deleteAccount() async throws {
+        _ = try await request(path: "/api/account", method: "DELETE")
     }
 }
