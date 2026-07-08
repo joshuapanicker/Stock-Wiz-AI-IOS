@@ -8,10 +8,7 @@ struct AuthView: View {
 
     var body: some View {
         ZStack {
-            DS.Color.background.ignoresSafeArea()
-            DS.Gradient.ambientGreen(opacity: 0.16)
-                .frame(height: 500)
-                .ignoresSafeArea()
+            DSAuroraBackground(intensity: 0.7)
 
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 32) {
